@@ -1,0 +1,16 @@
+.claude
+.cache/
+.cursorrules
+.cursorrules.md
+.cursorrules.txt
+.cursorrules.yml
+.cursorrules.yaml
+.cursorrules.yml
+*.csv
+build/
+data/
+.vscode/
+test/
+temp/
+*.jpeg
+.claude/
