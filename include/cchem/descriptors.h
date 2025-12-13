@@ -536,4 +536,20 @@ void descriptors_register_chi(void);
  */
 void descriptors_register_atompairs(void);
 
+/**
+ * Register BCUT eigenvalue descriptors (from bcut.c)
+ * - Burden matrix eigenvalues weighted by mass, charge, EN, polarizability, etc.
+ * - 48 descriptors (8 properties × 6 eigenvalues)
+ */
+void descriptors_register_bcut(void);
+
+/**
+ * Register Zagreb and related topological indices (from zagreb.c)
+ * - Zagreb M1, M2 indices and variants
+ * - Randic, Harmonic, ABC, GA connectivity indices
+ * - Balaban J, Wiener, and other distance-based indices
+ * - 24 descriptors
+ */
+void descriptors_register_zagreb(void);
+
 #endif /* CCHEM_DESCRIPTORS_H */

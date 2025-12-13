@@ -62,6 +62,8 @@ void descriptors_init(void) {
     descriptors_register_vsa();
     descriptors_register_chi();
     descriptors_register_atompairs();
+    descriptors_register_bcut();
+    descriptors_register_zagreb();
 }
 
 void descriptors_cleanup(void) {
