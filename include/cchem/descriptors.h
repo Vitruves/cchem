@@ -490,4 +490,50 @@ void descriptors_register_functional(void);
  */
 void descriptors_register_pharmacophore(void);
 
+/**
+ * Register MQN (Molecular Quantum Numbers) descriptors (from mqn.c)
+ * - 42 integer descriptors for chemical space navigation
+ * - Atom counts by type (C, F, Cl, Br, I, S, P, acyclic/cyclic N/O)
+ * - Bond counts (acyclic/cyclic single/double/triple)
+ * - Polarity (HBA, HBD, charges, valence nodes)
+ * - Topology (rings by size, aromatic atoms/bonds, rotatable bonds)
+ */
+void descriptors_register_mqn(void);
+
+/**
+ * Register E-State atom type count descriptors (from estate.c)
+ * - Counts atoms by electrotopological state type
+ * - Carbon types (ssCH3, ssCH2, sssCH, ssssC, dCH2, dsCH, aaCH, etc.)
+ * - Nitrogen types (sNH2, ssNH, sssN, aaNH, aaN, tN)
+ * - Oxygen types (sOH, ssO, dO, aaO)
+ * - Sulfur types (sSH, ssS, dS, aaS, dssS, ddssS)
+ * - Halogen types (sF, sCl, sBr, sI)
+ */
+void descriptors_register_estate(void);
+
+/**
+ * Register VSA (Van der Waals Surface Area) descriptors (from vsa.c)
+ * - SlogP_VSA (12 bins): Surface area by LogP contribution
+ * - SMR_VSA (10 bins): Surface area by molar refractivity
+ * - PEOE_VSA (14 bins): Surface area by partial charge
+ * - EState_VSA (11 bins): Surface area by E-state
+ */
+void descriptors_register_vsa(void);
+
+/**
+ * Register extended Chi connectivity indices (from chi.c)
+ * - Simple Chi (Chi0-Chi4): Path connectivity
+ * - Valence Chi (Chi0v-Chi4v): Valence-weighted connectivity
+ * - Cluster Chi (Chi3c, Chi4c, Chi4pc): Branching patterns
+ * - Kappa shape indices (Kappa1-3)
+ */
+void descriptors_register_chi(void);
+
+/**
+ * Register topological atom pair descriptors (from atompairs.c)
+ * - Pairs of atom types (C, N, O, S, Hal) at distances 1-7
+ * - Summary descriptors (total pairs, heteroatom pairs)
+ */
+void descriptors_register_atompairs(void);
+
 #endif /* CCHEM_DESCRIPTORS_H */

@@ -57,6 +57,11 @@ void descriptors_init(void) {
     descriptors_register_logd74();
     descriptors_register_functional();
     descriptors_register_pharmacophore();
+    descriptors_register_mqn();
+    descriptors_register_estate();
+    descriptors_register_vsa();
+    descriptors_register_chi();
+    descriptors_register_atompairs();
 }
 
 void descriptors_cleanup(void) {

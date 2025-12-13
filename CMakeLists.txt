@@ -96,6 +96,11 @@ set(CCHEM_SOURCES
     src/descriptors/logd74.c
     src/descriptors/functional.c
     src/descriptors/pharmacophore.c
+    src/descriptors/mqn.c
+    src/descriptors/estate.c
+    src/descriptors/vsa.c
+    src/descriptors/chi.c
+    src/descriptors/atompairs.c
     src/depictor/types.c
     src/depictor/colors.c
     src/depictor/coords2d.c
