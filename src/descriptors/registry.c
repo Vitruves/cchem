@@ -55,6 +55,8 @@ void descriptors_init(void) {
     descriptors_register_graph();
     descriptors_register_autocorrelations();
     descriptors_register_logd74();
+    descriptors_register_functional();
+    descriptors_register_pharmacophore();
 }
 
 void descriptors_cleanup(void) {

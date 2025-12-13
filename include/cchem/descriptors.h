@@ -467,4 +467,27 @@ int descriptors_compute_autocorr_all(const molecule_t* mol, descriptor_value_t* 
  */
 void descriptors_register_logd74(void);
 
+/**
+ * Register functional group descriptors (from functional.c)
+ * - Carbonyl variants (aldehyde, ketone, acyl halide, anhydride)
+ * - Nitrogen groups (imine, oxime, hydrazine, azo, azide, guanidine, etc.)
+ * - Sulfur groups (sulfide, disulfide, sulfoxide, sulfonamide, etc.)
+ * - Oxygen groups (epoxide, peroxide, acetal, hemiacetal, enol)
+ * - Mixed groups (urea, thiourea, carbamate, isocyanate, phosphate)
+ * - Heterocyclic scaffolds (pyridine, pyrimidine, pyrrole, furan, thiophene, imidazole, etc.)
+ * - Aliphatic rings (cyclopropane, piperidine, piperazine, morpholine, pyrrolidine)
+ * - Drug features (lactam, lactone, beta-lactam, vinyl, allyl, benzyl, phenyl)
+ */
+void descriptors_register_functional(void);
+
+/**
+ * Register pharmacophore and molecular complexity descriptors (from pharmacophore.c)
+ * - Pharmacophore points (lipophilic, basic N, acidic O, halogen bond donors)
+ * - Pharmacophore density and balance metrics
+ * - Molecular complexity (Bertz, flexibility, stereocenters)
+ * - Drug-likeness (Ro5, lead-likeness, CNS MPO)
+ * - Structural diversity metrics
+ */
+void descriptors_register_pharmacophore(void);
+
 #endif /* CCHEM_DESCRIPTORS_H */
