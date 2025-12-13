@@ -37,8 +37,23 @@
 /* Number of properties */
 #define NUM_PROPERTIES 6
 
-/* Total descriptors: 6 properties × 9 lags (0-8) */
-#define NUM_AUTOCORR_DESCRIPTORS 54
+/* Number of lags (0-8) */
+#define NUM_LAGS 9
+
+/* Autocorrelation types:
+ * ATS:  Broto-Moreau - 6 props × 9 lags = 54
+ * AATS: Average ATS  - 6 props × 8 lags = 48 (no lag 0)
+ * ATSC: Centered     - 6 props × 8 lags = 48 (no lag 0)
+ * MATS: Moran        - 6 props × 8 lags = 48 (no lag 0)
+ * GATS: Geary        - 6 props × 8 lags = 48 (no lag 0)
+ * Total: 54 + 48*4 = 246 descriptors
+ */
+#define NUM_ATS_DESCRIPTORS  54
+#define NUM_AATS_DESCRIPTORS 48
+#define NUM_ATSC_DESCRIPTORS 48
+#define NUM_MATS_DESCRIPTORS 48
+#define NUM_GATS_DESCRIPTORS 48
+#define NUM_AUTOCORR_DESCRIPTORS 246
 
 /* Maximum atoms for stack-allocated distance matrix */
 #define MAX_ATOMS_STACK 256
@@ -375,6 +390,121 @@ static double compute_ats(const double* props, const int* dist, int n, int d) {
     return sum;
 }
 
+/**
+ * Count pairs at distance d
+ */
+static int count_pairs_at_distance(const int* dist, int n, int d) {
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (dist[i * n + j] == d) count++;
+        }
+    }
+    return count;
+}
+
+/**
+ * Compute mean of properties
+ */
+static double compute_mean(const double* props, int n) {
+    if (n == 0) return 0.0;
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) sum += props[i];
+    return sum / n;
+}
+
+/**
+ * Compute variance of properties
+ */
+static double compute_variance(const double* props, int n, double mean) {
+    if (n <= 1) return 0.0;
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) {
+        double d = props[i] - mean;
+        sum += d * d;
+    }
+    return sum / n;
+}
+
+/**
+ * AATS: Average ATS - normalized by number of pairs
+ * AATS_d = ATS_d / n_pairs_d
+ */
+static double compute_aats(const double* props, const int* dist, int n, int d) {
+    if (d == 0) return 0.0;  /* AATS not defined for lag 0 */
+
+    int n_pairs = count_pairs_at_distance(dist, n, d);
+    if (n_pairs == 0) return 0.0;
+
+    double ats = compute_ats(props, dist, n, d) / 2.0;  /* Undo the *2 */
+    return ats / n_pairs;
+}
+
+/**
+ * ATSC: Centered ATS - uses centered properties
+ * ATSC_d = Σ (p_i - mean) * (p_j - mean) for d(i,j) = d
+ */
+static double compute_atsc(const double* props, const int* dist, int n, int d, double mean) {
+    if (d == 0) return 0.0;  /* ATSC not defined for lag 0 */
+
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (dist[i * n + j] == d) {
+                sum += (props[i] - mean) * (props[j] - mean);
+            }
+        }
+    }
+    return sum * 2.0;
+}
+
+/**
+ * MATS: Moran autocorrelation coefficient
+ * MATS_d = [n * Σ(p_i - mean)(p_j - mean)] / [Σ(p_i - mean)^2 * n_pairs_d]
+ */
+static double compute_mats(const double* props, const int* dist, int n, int d, double mean, double var) {
+    if (d == 0 || var < 1e-10) return 0.0;
+
+    int n_pairs = count_pairs_at_distance(dist, n, d);
+    if (n_pairs == 0) return 0.0;
+
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (dist[i * n + j] == d) {
+                sum += (props[i] - mean) * (props[j] - mean);
+            }
+        }
+    }
+
+    /* Moran's I formula */
+    return (n * sum) / (var * n * n_pairs);
+}
+
+/**
+ * GATS: Geary autocorrelation coefficient
+ * GATS_d = [(n-1) * Σ(p_i - p_j)^2] / [2 * n_pairs_d * Σ(p_i - mean)^2]
+ */
+static double compute_gats(const double* props, const int* dist, int n, int d, double var) {
+    if (d == 0 || n <= 1 || var < 1e-10) return 0.0;
+
+    int n_pairs = count_pairs_at_distance(dist, n, d);
+    if (n_pairs == 0) return 0.0;
+
+    double sum_sq_diff = 0.0;
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (dist[i * n + j] == d) {
+                double diff = props[i] - props[j];
+                sum_sq_diff += diff * diff;
+            }
+        }
+    }
+
+    /* Geary's C formula */
+    return ((n - 1) * sum_sq_diff) / (2.0 * n_pairs * var * n);
+}
+
 /* ============================================================================
  * Batch Computation (thread-safe)
  * ============================================================================ */
@@ -467,37 +597,61 @@ int descriptors_compute_autocorr_all(const molecule_t* mol, descriptor_value_t* 
         props_charge[i] = gasteiger[orig_idx];
     }
 
-    /* Compute autocorrelations for each property and lag */
+    /* Compute means and variances for centered/normalized autocorrelations */
+    double mean_mass = compute_mean(props_mass, actual_heavy);
+    double mean_vol = compute_mean(props_vol, actual_heavy);
+    double mean_en = compute_mean(props_en, actual_heavy);
+    double mean_pol = compute_mean(props_pol, actual_heavy);
+    double mean_ip = compute_mean(props_ip, actual_heavy);
+    double mean_charge = compute_mean(props_charge, actual_heavy);
+
+    double var_mass = compute_variance(props_mass, actual_heavy, mean_mass);
+    double var_vol = compute_variance(props_vol, actual_heavy, mean_vol);
+    double var_en = compute_variance(props_en, actual_heavy, mean_en);
+    double var_pol = compute_variance(props_pol, actual_heavy, mean_pol);
+    double var_ip = compute_variance(props_ip, actual_heavy, mean_ip);
+    double var_charge = compute_variance(props_charge, actual_heavy, mean_charge);
+
+    /* Store property arrays and stats for iteration */
+    const double* props[6] = {props_mass, props_vol, props_en, props_pol, props_ip, props_charge};
+    double means[6] = {mean_mass, mean_vol, mean_en, mean_pol, mean_ip, mean_charge};
+    double vars[6] = {var_mass, var_vol, var_en, var_pol, var_ip, var_charge};
+
     int idx = 0;
 
-    /* ATSm: Mass-weighted (lags 0-8) */
-    for (int d = 0; d <= MAX_LAG; d++) {
-        values[idx++].d = compute_ats(props_mass, dist_matrix, actual_heavy, d);
+    /* ATS: Broto-Moreau autocorrelations (6 properties × 9 lags) = 54 */
+    for (int p = 0; p < NUM_PROPERTIES; p++) {
+        for (int d = 0; d <= MAX_LAG; d++) {
+            values[idx++].d = compute_ats(props[p], dist_matrix, actual_heavy, d);
+        }
     }
 
-    /* ATSv: Volume-weighted (lags 0-8) */
-    for (int d = 0; d <= MAX_LAG; d++) {
-        values[idx++].d = compute_ats(props_vol, dist_matrix, actual_heavy, d);
+    /* AATS: Average ATS (6 properties × 8 lags, no lag 0) = 48 */
+    for (int p = 0; p < NUM_PROPERTIES; p++) {
+        for (int d = 1; d <= MAX_LAG; d++) {
+            values[idx++].d = compute_aats(props[p], dist_matrix, actual_heavy, d);
+        }
     }
 
-    /* ATSe: Electronegativity-weighted (lags 0-8) */
-    for (int d = 0; d <= MAX_LAG; d++) {
-        values[idx++].d = compute_ats(props_en, dist_matrix, actual_heavy, d);
+    /* ATSC: Centered autocorrelations (6 properties × 8 lags, no lag 0) = 48 */
+    for (int p = 0; p < NUM_PROPERTIES; p++) {
+        for (int d = 1; d <= MAX_LAG; d++) {
+            values[idx++].d = compute_atsc(props[p], dist_matrix, actual_heavy, d, means[p]);
+        }
     }
 
-    /* ATSp: Polarizability-weighted (lags 0-8) */
-    for (int d = 0; d <= MAX_LAG; d++) {
-        values[idx++].d = compute_ats(props_pol, dist_matrix, actual_heavy, d);
+    /* MATS: Moran autocorrelation (6 properties × 8 lags, no lag 0) = 48 */
+    for (int p = 0; p < NUM_PROPERTIES; p++) {
+        for (int d = 1; d <= MAX_LAG; d++) {
+            values[idx++].d = compute_mats(props[p], dist_matrix, actual_heavy, d, means[p], vars[p]);
+        }
     }
 
-    /* ATSi: Ionization potential-weighted (lags 0-8) */
-    for (int d = 0; d <= MAX_LAG; d++) {
-        values[idx++].d = compute_ats(props_ip, dist_matrix, actual_heavy, d);
-    }
-
-    /* ATSc: Charge-weighted (lags 0-8) */
-    for (int d = 0; d <= MAX_LAG; d++) {
-        values[idx++].d = compute_ats(props_charge, dist_matrix, actual_heavy, d);
+    /* GATS: Geary autocorrelation (6 properties × 8 lags, no lag 0) = 48 */
+    for (int p = 0; p < NUM_PROPERTIES; p++) {
+        for (int d = 1; d <= MAX_LAG; d++) {
+            values[idx++].d = compute_gats(props[p], dist_matrix, actual_heavy, d, vars[p]);
+        }
     }
 
     if (heap_alloc) {
@@ -510,16 +664,69 @@ int descriptors_compute_autocorr_all(const molecule_t* mol, descriptor_value_t* 
 }
 
 /* ============================================================================
- * Individual Descriptor Functions
+ * Individual Descriptor Functions with Thread-Local Caching
  * ============================================================================ */
 
-/* Macro for generating individual ATS descriptor functions */
+/* Offset for each autocorrelation type in the batch output */
+#define ATS_OFFSET  0
+#define AATS_OFFSET NUM_ATS_DESCRIPTORS
+#define ATSC_OFFSET (AATS_OFFSET + NUM_AATS_DESCRIPTORS)
+#define MATS_OFFSET (ATSC_OFFSET + NUM_ATSC_DESCRIPTORS)
+#define GATS_OFFSET (MATS_OFFSET + NUM_MATS_DESCRIPTORS)
+
+/* Thread-local cache to avoid recomputing for same molecule */
+static _Thread_local const molecule_t* cached_mol = NULL;
+static _Thread_local descriptor_value_t cached_values[NUM_AUTOCORR_DESCRIPTORS];
+
+static inline void ensure_autocorr_computed(const molecule_t* mol) {
+    if (cached_mol != mol) {
+        descriptors_compute_autocorr_all(mol, cached_values);
+        cached_mol = mol;
+    }
+}
+
+/* Macro for generating individual ATS descriptor functions (has lag 0) */
 #define DEFINE_ATS_FUNC(name, prop_idx, lag) \
 static cchem_status_t desc_##name(const molecule_t* mol, descriptor_value_t* value) { \
     if (!mol || !value) return CCHEM_ERROR_INVALID_INPUT; \
-    descriptor_value_t all_values[NUM_AUTOCORR_DESCRIPTORS]; \
-    descriptors_compute_autocorr_all(mol, all_values); \
-    value->d = all_values[(prop_idx) * 9 + (lag)].d; \
+    ensure_autocorr_computed(mol); \
+    value->d = cached_values[ATS_OFFSET + (prop_idx) * 9 + (lag)].d; \
+    return CCHEM_OK; \
+}
+
+/* Macro for generating AATS descriptor functions (lags 1-8 only) */
+#define DEFINE_AATS_FUNC(name, prop_idx, lag) \
+static cchem_status_t desc_##name(const molecule_t* mol, descriptor_value_t* value) { \
+    if (!mol || !value) return CCHEM_ERROR_INVALID_INPUT; \
+    ensure_autocorr_computed(mol); \
+    value->d = cached_values[AATS_OFFSET + (prop_idx) * 8 + ((lag) - 1)].d; \
+    return CCHEM_OK; \
+}
+
+/* Macro for generating ATSC descriptor functions (lags 1-8 only) */
+#define DEFINE_ATSC_FUNC(name, prop_idx, lag) \
+static cchem_status_t desc_##name(const molecule_t* mol, descriptor_value_t* value) { \
+    if (!mol || !value) return CCHEM_ERROR_INVALID_INPUT; \
+    ensure_autocorr_computed(mol); \
+    value->d = cached_values[ATSC_OFFSET + (prop_idx) * 8 + ((lag) - 1)].d; \
+    return CCHEM_OK; \
+}
+
+/* Macro for generating MATS descriptor functions (lags 1-8 only) */
+#define DEFINE_MATS_FUNC(name, prop_idx, lag) \
+static cchem_status_t desc_##name(const molecule_t* mol, descriptor_value_t* value) { \
+    if (!mol || !value) return CCHEM_ERROR_INVALID_INPUT; \
+    ensure_autocorr_computed(mol); \
+    value->d = cached_values[MATS_OFFSET + (prop_idx) * 8 + ((lag) - 1)].d; \
+    return CCHEM_OK; \
+}
+
+/* Macro for generating GATS descriptor functions (lags 1-8 only) */
+#define DEFINE_GATS_FUNC(name, prop_idx, lag) \
+static cchem_status_t desc_##name(const molecule_t* mol, descriptor_value_t* value) { \
+    if (!mol || !value) return CCHEM_ERROR_INVALID_INPUT; \
+    ensure_autocorr_computed(mol); \
+    value->d = cached_values[GATS_OFFSET + (prop_idx) * 8 + ((lag) - 1)].d; \
     return CCHEM_OK; \
 }
 
@@ -588,6 +795,262 @@ DEFINE_ATS_FUNC(ats_c5, 5, 5)
 DEFINE_ATS_FUNC(ats_c6, 5, 6)
 DEFINE_ATS_FUNC(ats_c7, 5, 7)
 DEFINE_ATS_FUNC(ats_c8, 5, 8)
+
+/* ============================================================================
+ * AATS: Average Autocorrelations (lags 1-8 only)
+ * ============================================================================ */
+
+/* AATSm: Mass-weighted (property index 0) */
+DEFINE_AATS_FUNC(aats_m1, 0, 1)
+DEFINE_AATS_FUNC(aats_m2, 0, 2)
+DEFINE_AATS_FUNC(aats_m3, 0, 3)
+DEFINE_AATS_FUNC(aats_m4, 0, 4)
+DEFINE_AATS_FUNC(aats_m5, 0, 5)
+DEFINE_AATS_FUNC(aats_m6, 0, 6)
+DEFINE_AATS_FUNC(aats_m7, 0, 7)
+DEFINE_AATS_FUNC(aats_m8, 0, 8)
+
+/* AATSv: Volume-weighted (property index 1) */
+DEFINE_AATS_FUNC(aats_v1, 1, 1)
+DEFINE_AATS_FUNC(aats_v2, 1, 2)
+DEFINE_AATS_FUNC(aats_v3, 1, 3)
+DEFINE_AATS_FUNC(aats_v4, 1, 4)
+DEFINE_AATS_FUNC(aats_v5, 1, 5)
+DEFINE_AATS_FUNC(aats_v6, 1, 6)
+DEFINE_AATS_FUNC(aats_v7, 1, 7)
+DEFINE_AATS_FUNC(aats_v8, 1, 8)
+
+/* AATSe: Electronegativity-weighted (property index 2) */
+DEFINE_AATS_FUNC(aats_e1, 2, 1)
+DEFINE_AATS_FUNC(aats_e2, 2, 2)
+DEFINE_AATS_FUNC(aats_e3, 2, 3)
+DEFINE_AATS_FUNC(aats_e4, 2, 4)
+DEFINE_AATS_FUNC(aats_e5, 2, 5)
+DEFINE_AATS_FUNC(aats_e6, 2, 6)
+DEFINE_AATS_FUNC(aats_e7, 2, 7)
+DEFINE_AATS_FUNC(aats_e8, 2, 8)
+
+/* AATSp: Polarizability-weighted (property index 3) */
+DEFINE_AATS_FUNC(aats_p1, 3, 1)
+DEFINE_AATS_FUNC(aats_p2, 3, 2)
+DEFINE_AATS_FUNC(aats_p3, 3, 3)
+DEFINE_AATS_FUNC(aats_p4, 3, 4)
+DEFINE_AATS_FUNC(aats_p5, 3, 5)
+DEFINE_AATS_FUNC(aats_p6, 3, 6)
+DEFINE_AATS_FUNC(aats_p7, 3, 7)
+DEFINE_AATS_FUNC(aats_p8, 3, 8)
+
+/* AATSi: Ionization potential-weighted (property index 4) */
+DEFINE_AATS_FUNC(aats_i1, 4, 1)
+DEFINE_AATS_FUNC(aats_i2, 4, 2)
+DEFINE_AATS_FUNC(aats_i3, 4, 3)
+DEFINE_AATS_FUNC(aats_i4, 4, 4)
+DEFINE_AATS_FUNC(aats_i5, 4, 5)
+DEFINE_AATS_FUNC(aats_i6, 4, 6)
+DEFINE_AATS_FUNC(aats_i7, 4, 7)
+DEFINE_AATS_FUNC(aats_i8, 4, 8)
+
+/* AATSc: Charge-weighted (property index 5) */
+DEFINE_AATS_FUNC(aats_c1, 5, 1)
+DEFINE_AATS_FUNC(aats_c2, 5, 2)
+DEFINE_AATS_FUNC(aats_c3, 5, 3)
+DEFINE_AATS_FUNC(aats_c4, 5, 4)
+DEFINE_AATS_FUNC(aats_c5, 5, 5)
+DEFINE_AATS_FUNC(aats_c6, 5, 6)
+DEFINE_AATS_FUNC(aats_c7, 5, 7)
+DEFINE_AATS_FUNC(aats_c8, 5, 8)
+
+/* ============================================================================
+ * ATSC: Centered Autocorrelations (lags 1-8 only)
+ * ============================================================================ */
+
+/* ATSCm: Mass-weighted (property index 0) */
+DEFINE_ATSC_FUNC(atsc_m1, 0, 1)
+DEFINE_ATSC_FUNC(atsc_m2, 0, 2)
+DEFINE_ATSC_FUNC(atsc_m3, 0, 3)
+DEFINE_ATSC_FUNC(atsc_m4, 0, 4)
+DEFINE_ATSC_FUNC(atsc_m5, 0, 5)
+DEFINE_ATSC_FUNC(atsc_m6, 0, 6)
+DEFINE_ATSC_FUNC(atsc_m7, 0, 7)
+DEFINE_ATSC_FUNC(atsc_m8, 0, 8)
+
+/* ATSCv: Volume-weighted (property index 1) */
+DEFINE_ATSC_FUNC(atsc_v1, 1, 1)
+DEFINE_ATSC_FUNC(atsc_v2, 1, 2)
+DEFINE_ATSC_FUNC(atsc_v3, 1, 3)
+DEFINE_ATSC_FUNC(atsc_v4, 1, 4)
+DEFINE_ATSC_FUNC(atsc_v5, 1, 5)
+DEFINE_ATSC_FUNC(atsc_v6, 1, 6)
+DEFINE_ATSC_FUNC(atsc_v7, 1, 7)
+DEFINE_ATSC_FUNC(atsc_v8, 1, 8)
+
+/* ATSCe: Electronegativity-weighted (property index 2) */
+DEFINE_ATSC_FUNC(atsc_e1, 2, 1)
+DEFINE_ATSC_FUNC(atsc_e2, 2, 2)
+DEFINE_ATSC_FUNC(atsc_e3, 2, 3)
+DEFINE_ATSC_FUNC(atsc_e4, 2, 4)
+DEFINE_ATSC_FUNC(atsc_e5, 2, 5)
+DEFINE_ATSC_FUNC(atsc_e6, 2, 6)
+DEFINE_ATSC_FUNC(atsc_e7, 2, 7)
+DEFINE_ATSC_FUNC(atsc_e8, 2, 8)
+
+/* ATSCp: Polarizability-weighted (property index 3) */
+DEFINE_ATSC_FUNC(atsc_p1, 3, 1)
+DEFINE_ATSC_FUNC(atsc_p2, 3, 2)
+DEFINE_ATSC_FUNC(atsc_p3, 3, 3)
+DEFINE_ATSC_FUNC(atsc_p4, 3, 4)
+DEFINE_ATSC_FUNC(atsc_p5, 3, 5)
+DEFINE_ATSC_FUNC(atsc_p6, 3, 6)
+DEFINE_ATSC_FUNC(atsc_p7, 3, 7)
+DEFINE_ATSC_FUNC(atsc_p8, 3, 8)
+
+/* ATSCi: Ionization potential-weighted (property index 4) */
+DEFINE_ATSC_FUNC(atsc_i1, 4, 1)
+DEFINE_ATSC_FUNC(atsc_i2, 4, 2)
+DEFINE_ATSC_FUNC(atsc_i3, 4, 3)
+DEFINE_ATSC_FUNC(atsc_i4, 4, 4)
+DEFINE_ATSC_FUNC(atsc_i5, 4, 5)
+DEFINE_ATSC_FUNC(atsc_i6, 4, 6)
+DEFINE_ATSC_FUNC(atsc_i7, 4, 7)
+DEFINE_ATSC_FUNC(atsc_i8, 4, 8)
+
+/* ATSCc: Charge-weighted (property index 5) */
+DEFINE_ATSC_FUNC(atsc_c1, 5, 1)
+DEFINE_ATSC_FUNC(atsc_c2, 5, 2)
+DEFINE_ATSC_FUNC(atsc_c3, 5, 3)
+DEFINE_ATSC_FUNC(atsc_c4, 5, 4)
+DEFINE_ATSC_FUNC(atsc_c5, 5, 5)
+DEFINE_ATSC_FUNC(atsc_c6, 5, 6)
+DEFINE_ATSC_FUNC(atsc_c7, 5, 7)
+DEFINE_ATSC_FUNC(atsc_c8, 5, 8)
+
+/* ============================================================================
+ * MATS: Moran Autocorrelations (lags 1-8 only)
+ * ============================================================================ */
+
+/* MATSm: Mass-weighted (property index 0) */
+DEFINE_MATS_FUNC(mats_m1, 0, 1)
+DEFINE_MATS_FUNC(mats_m2, 0, 2)
+DEFINE_MATS_FUNC(mats_m3, 0, 3)
+DEFINE_MATS_FUNC(mats_m4, 0, 4)
+DEFINE_MATS_FUNC(mats_m5, 0, 5)
+DEFINE_MATS_FUNC(mats_m6, 0, 6)
+DEFINE_MATS_FUNC(mats_m7, 0, 7)
+DEFINE_MATS_FUNC(mats_m8, 0, 8)
+
+/* MATSv: Volume-weighted (property index 1) */
+DEFINE_MATS_FUNC(mats_v1, 1, 1)
+DEFINE_MATS_FUNC(mats_v2, 1, 2)
+DEFINE_MATS_FUNC(mats_v3, 1, 3)
+DEFINE_MATS_FUNC(mats_v4, 1, 4)
+DEFINE_MATS_FUNC(mats_v5, 1, 5)
+DEFINE_MATS_FUNC(mats_v6, 1, 6)
+DEFINE_MATS_FUNC(mats_v7, 1, 7)
+DEFINE_MATS_FUNC(mats_v8, 1, 8)
+
+/* MATSe: Electronegativity-weighted (property index 2) */
+DEFINE_MATS_FUNC(mats_e1, 2, 1)
+DEFINE_MATS_FUNC(mats_e2, 2, 2)
+DEFINE_MATS_FUNC(mats_e3, 2, 3)
+DEFINE_MATS_FUNC(mats_e4, 2, 4)
+DEFINE_MATS_FUNC(mats_e5, 2, 5)
+DEFINE_MATS_FUNC(mats_e6, 2, 6)
+DEFINE_MATS_FUNC(mats_e7, 2, 7)
+DEFINE_MATS_FUNC(mats_e8, 2, 8)
+
+/* MATSp: Polarizability-weighted (property index 3) */
+DEFINE_MATS_FUNC(mats_p1, 3, 1)
+DEFINE_MATS_FUNC(mats_p2, 3, 2)
+DEFINE_MATS_FUNC(mats_p3, 3, 3)
+DEFINE_MATS_FUNC(mats_p4, 3, 4)
+DEFINE_MATS_FUNC(mats_p5, 3, 5)
+DEFINE_MATS_FUNC(mats_p6, 3, 6)
+DEFINE_MATS_FUNC(mats_p7, 3, 7)
+DEFINE_MATS_FUNC(mats_p8, 3, 8)
+
+/* MATSi: Ionization potential-weighted (property index 4) */
+DEFINE_MATS_FUNC(mats_i1, 4, 1)
+DEFINE_MATS_FUNC(mats_i2, 4, 2)
+DEFINE_MATS_FUNC(mats_i3, 4, 3)
+DEFINE_MATS_FUNC(mats_i4, 4, 4)
+DEFINE_MATS_FUNC(mats_i5, 4, 5)
+DEFINE_MATS_FUNC(mats_i6, 4, 6)
+DEFINE_MATS_FUNC(mats_i7, 4, 7)
+DEFINE_MATS_FUNC(mats_i8, 4, 8)
+
+/* MATSc: Charge-weighted (property index 5) */
+DEFINE_MATS_FUNC(mats_c1, 5, 1)
+DEFINE_MATS_FUNC(mats_c2, 5, 2)
+DEFINE_MATS_FUNC(mats_c3, 5, 3)
+DEFINE_MATS_FUNC(mats_c4, 5, 4)
+DEFINE_MATS_FUNC(mats_c5, 5, 5)
+DEFINE_MATS_FUNC(mats_c6, 5, 6)
+DEFINE_MATS_FUNC(mats_c7, 5, 7)
+DEFINE_MATS_FUNC(mats_c8, 5, 8)
+
+/* ============================================================================
+ * GATS: Geary Autocorrelations (lags 1-8 only)
+ * ============================================================================ */
+
+/* GATSm: Mass-weighted (property index 0) */
+DEFINE_GATS_FUNC(gats_m1, 0, 1)
+DEFINE_GATS_FUNC(gats_m2, 0, 2)
+DEFINE_GATS_FUNC(gats_m3, 0, 3)
+DEFINE_GATS_FUNC(gats_m4, 0, 4)
+DEFINE_GATS_FUNC(gats_m5, 0, 5)
+DEFINE_GATS_FUNC(gats_m6, 0, 6)
+DEFINE_GATS_FUNC(gats_m7, 0, 7)
+DEFINE_GATS_FUNC(gats_m8, 0, 8)
+
+/* GATSv: Volume-weighted (property index 1) */
+DEFINE_GATS_FUNC(gats_v1, 1, 1)
+DEFINE_GATS_FUNC(gats_v2, 1, 2)
+DEFINE_GATS_FUNC(gats_v3, 1, 3)
+DEFINE_GATS_FUNC(gats_v4, 1, 4)
+DEFINE_GATS_FUNC(gats_v5, 1, 5)
+DEFINE_GATS_FUNC(gats_v6, 1, 6)
+DEFINE_GATS_FUNC(gats_v7, 1, 7)
+DEFINE_GATS_FUNC(gats_v8, 1, 8)
+
+/* GATSe: Electronegativity-weighted (property index 2) */
+DEFINE_GATS_FUNC(gats_e1, 2, 1)
+DEFINE_GATS_FUNC(gats_e2, 2, 2)
+DEFINE_GATS_FUNC(gats_e3, 2, 3)
+DEFINE_GATS_FUNC(gats_e4, 2, 4)
+DEFINE_GATS_FUNC(gats_e5, 2, 5)
+DEFINE_GATS_FUNC(gats_e6, 2, 6)
+DEFINE_GATS_FUNC(gats_e7, 2, 7)
+DEFINE_GATS_FUNC(gats_e8, 2, 8)
+
+/* GATSp: Polarizability-weighted (property index 3) */
+DEFINE_GATS_FUNC(gats_p1, 3, 1)
+DEFINE_GATS_FUNC(gats_p2, 3, 2)
+DEFINE_GATS_FUNC(gats_p3, 3, 3)
+DEFINE_GATS_FUNC(gats_p4, 3, 4)
+DEFINE_GATS_FUNC(gats_p5, 3, 5)
+DEFINE_GATS_FUNC(gats_p6, 3, 6)
+DEFINE_GATS_FUNC(gats_p7, 3, 7)
+DEFINE_GATS_FUNC(gats_p8, 3, 8)
+
+/* GATSi: Ionization potential-weighted (property index 4) */
+DEFINE_GATS_FUNC(gats_i1, 4, 1)
+DEFINE_GATS_FUNC(gats_i2, 4, 2)
+DEFINE_GATS_FUNC(gats_i3, 4, 3)
+DEFINE_GATS_FUNC(gats_i4, 4, 4)
+DEFINE_GATS_FUNC(gats_i5, 4, 5)
+DEFINE_GATS_FUNC(gats_i6, 4, 6)
+DEFINE_GATS_FUNC(gats_i7, 4, 7)
+DEFINE_GATS_FUNC(gats_i8, 4, 8)
+
+/* GATSc: Charge-weighted (property index 5) */
+DEFINE_GATS_FUNC(gats_c1, 5, 1)
+DEFINE_GATS_FUNC(gats_c2, 5, 2)
+DEFINE_GATS_FUNC(gats_c3, 5, 3)
+DEFINE_GATS_FUNC(gats_c4, 5, 4)
+DEFINE_GATS_FUNC(gats_c5, 5, 5)
+DEFINE_GATS_FUNC(gats_c6, 5, 6)
+DEFINE_GATS_FUNC(gats_c7, 5, 7)
+DEFINE_GATS_FUNC(gats_c8, 5, 8)
 
 /* ============================================================================
  * Registration
@@ -669,4 +1132,252 @@ void descriptors_register_autocorrelations(void) {
     REGISTER_AUTOCORR_DESC("ATSc6", "Charge autocorr lag 6", desc_ats_c6);
     REGISTER_AUTOCORR_DESC("ATSc7", "Charge autocorr lag 7", desc_ats_c7);
     REGISTER_AUTOCORR_DESC("ATSc8", "Charge autocorr lag 8", desc_ats_c8);
+
+    /* ========== AATS: Average Autocorrelations ========== */
+
+    /* AATSm: Mass-weighted average autocorrelations */
+    REGISTER_AUTOCORR_DESC("AATSm1", "Avg mass autocorr lag 1", desc_aats_m1);
+    REGISTER_AUTOCORR_DESC("AATSm2", "Avg mass autocorr lag 2", desc_aats_m2);
+    REGISTER_AUTOCORR_DESC("AATSm3", "Avg mass autocorr lag 3", desc_aats_m3);
+    REGISTER_AUTOCORR_DESC("AATSm4", "Avg mass autocorr lag 4", desc_aats_m4);
+    REGISTER_AUTOCORR_DESC("AATSm5", "Avg mass autocorr lag 5", desc_aats_m5);
+    REGISTER_AUTOCORR_DESC("AATSm6", "Avg mass autocorr lag 6", desc_aats_m6);
+    REGISTER_AUTOCORR_DESC("AATSm7", "Avg mass autocorr lag 7", desc_aats_m7);
+    REGISTER_AUTOCORR_DESC("AATSm8", "Avg mass autocorr lag 8", desc_aats_m8);
+
+    /* AATSv: Volume-weighted average autocorrelations */
+    REGISTER_AUTOCORR_DESC("AATSv1", "Avg volume autocorr lag 1", desc_aats_v1);
+    REGISTER_AUTOCORR_DESC("AATSv2", "Avg volume autocorr lag 2", desc_aats_v2);
+    REGISTER_AUTOCORR_DESC("AATSv3", "Avg volume autocorr lag 3", desc_aats_v3);
+    REGISTER_AUTOCORR_DESC("AATSv4", "Avg volume autocorr lag 4", desc_aats_v4);
+    REGISTER_AUTOCORR_DESC("AATSv5", "Avg volume autocorr lag 5", desc_aats_v5);
+    REGISTER_AUTOCORR_DESC("AATSv6", "Avg volume autocorr lag 6", desc_aats_v6);
+    REGISTER_AUTOCORR_DESC("AATSv7", "Avg volume autocorr lag 7", desc_aats_v7);
+    REGISTER_AUTOCORR_DESC("AATSv8", "Avg volume autocorr lag 8", desc_aats_v8);
+
+    /* AATSe: Electronegativity-weighted average autocorrelations */
+    REGISTER_AUTOCORR_DESC("AATSe1", "Avg EN autocorr lag 1", desc_aats_e1);
+    REGISTER_AUTOCORR_DESC("AATSe2", "Avg EN autocorr lag 2", desc_aats_e2);
+    REGISTER_AUTOCORR_DESC("AATSe3", "Avg EN autocorr lag 3", desc_aats_e3);
+    REGISTER_AUTOCORR_DESC("AATSe4", "Avg EN autocorr lag 4", desc_aats_e4);
+    REGISTER_AUTOCORR_DESC("AATSe5", "Avg EN autocorr lag 5", desc_aats_e5);
+    REGISTER_AUTOCORR_DESC("AATSe6", "Avg EN autocorr lag 6", desc_aats_e6);
+    REGISTER_AUTOCORR_DESC("AATSe7", "Avg EN autocorr lag 7", desc_aats_e7);
+    REGISTER_AUTOCORR_DESC("AATSe8", "Avg EN autocorr lag 8", desc_aats_e8);
+
+    /* AATSp: Polarizability-weighted average autocorrelations */
+    REGISTER_AUTOCORR_DESC("AATSp1", "Avg polariz autocorr lag 1", desc_aats_p1);
+    REGISTER_AUTOCORR_DESC("AATSp2", "Avg polariz autocorr lag 2", desc_aats_p2);
+    REGISTER_AUTOCORR_DESC("AATSp3", "Avg polariz autocorr lag 3", desc_aats_p3);
+    REGISTER_AUTOCORR_DESC("AATSp4", "Avg polariz autocorr lag 4", desc_aats_p4);
+    REGISTER_AUTOCORR_DESC("AATSp5", "Avg polariz autocorr lag 5", desc_aats_p5);
+    REGISTER_AUTOCORR_DESC("AATSp6", "Avg polariz autocorr lag 6", desc_aats_p6);
+    REGISTER_AUTOCORR_DESC("AATSp7", "Avg polariz autocorr lag 7", desc_aats_p7);
+    REGISTER_AUTOCORR_DESC("AATSp8", "Avg polariz autocorr lag 8", desc_aats_p8);
+
+    /* AATSi: Ionization potential-weighted average autocorrelations */
+    REGISTER_AUTOCORR_DESC("AATSi1", "Avg IP autocorr lag 1", desc_aats_i1);
+    REGISTER_AUTOCORR_DESC("AATSi2", "Avg IP autocorr lag 2", desc_aats_i2);
+    REGISTER_AUTOCORR_DESC("AATSi3", "Avg IP autocorr lag 3", desc_aats_i3);
+    REGISTER_AUTOCORR_DESC("AATSi4", "Avg IP autocorr lag 4", desc_aats_i4);
+    REGISTER_AUTOCORR_DESC("AATSi5", "Avg IP autocorr lag 5", desc_aats_i5);
+    REGISTER_AUTOCORR_DESC("AATSi6", "Avg IP autocorr lag 6", desc_aats_i6);
+    REGISTER_AUTOCORR_DESC("AATSi7", "Avg IP autocorr lag 7", desc_aats_i7);
+    REGISTER_AUTOCORR_DESC("AATSi8", "Avg IP autocorr lag 8", desc_aats_i8);
+
+    /* AATSc: Charge-weighted average autocorrelations */
+    REGISTER_AUTOCORR_DESC("AATSc1", "Avg charge autocorr lag 1", desc_aats_c1);
+    REGISTER_AUTOCORR_DESC("AATSc2", "Avg charge autocorr lag 2", desc_aats_c2);
+    REGISTER_AUTOCORR_DESC("AATSc3", "Avg charge autocorr lag 3", desc_aats_c3);
+    REGISTER_AUTOCORR_DESC("AATSc4", "Avg charge autocorr lag 4", desc_aats_c4);
+    REGISTER_AUTOCORR_DESC("AATSc5", "Avg charge autocorr lag 5", desc_aats_c5);
+    REGISTER_AUTOCORR_DESC("AATSc6", "Avg charge autocorr lag 6", desc_aats_c6);
+    REGISTER_AUTOCORR_DESC("AATSc7", "Avg charge autocorr lag 7", desc_aats_c7);
+    REGISTER_AUTOCORR_DESC("AATSc8", "Avg charge autocorr lag 8", desc_aats_c8);
+
+    /* ========== ATSC: Centered Autocorrelations ========== */
+
+    /* ATSCm: Mass-weighted centered autocorrelations */
+    REGISTER_AUTOCORR_DESC("ATSCm1", "Centered mass autocorr lag 1", desc_atsc_m1);
+    REGISTER_AUTOCORR_DESC("ATSCm2", "Centered mass autocorr lag 2", desc_atsc_m2);
+    REGISTER_AUTOCORR_DESC("ATSCm3", "Centered mass autocorr lag 3", desc_atsc_m3);
+    REGISTER_AUTOCORR_DESC("ATSCm4", "Centered mass autocorr lag 4", desc_atsc_m4);
+    REGISTER_AUTOCORR_DESC("ATSCm5", "Centered mass autocorr lag 5", desc_atsc_m5);
+    REGISTER_AUTOCORR_DESC("ATSCm6", "Centered mass autocorr lag 6", desc_atsc_m6);
+    REGISTER_AUTOCORR_DESC("ATSCm7", "Centered mass autocorr lag 7", desc_atsc_m7);
+    REGISTER_AUTOCORR_DESC("ATSCm8", "Centered mass autocorr lag 8", desc_atsc_m8);
+
+    /* ATSCv: Volume-weighted centered autocorrelations */
+    REGISTER_AUTOCORR_DESC("ATSCv1", "Centered volume autocorr lag 1", desc_atsc_v1);
+    REGISTER_AUTOCORR_DESC("ATSCv2", "Centered volume autocorr lag 2", desc_atsc_v2);
+    REGISTER_AUTOCORR_DESC("ATSCv3", "Centered volume autocorr lag 3", desc_atsc_v3);
+    REGISTER_AUTOCORR_DESC("ATSCv4", "Centered volume autocorr lag 4", desc_atsc_v4);
+    REGISTER_AUTOCORR_DESC("ATSCv5", "Centered volume autocorr lag 5", desc_atsc_v5);
+    REGISTER_AUTOCORR_DESC("ATSCv6", "Centered volume autocorr lag 6", desc_atsc_v6);
+    REGISTER_AUTOCORR_DESC("ATSCv7", "Centered volume autocorr lag 7", desc_atsc_v7);
+    REGISTER_AUTOCORR_DESC("ATSCv8", "Centered volume autocorr lag 8", desc_atsc_v8);
+
+    /* ATSCe: Electronegativity-weighted centered autocorrelations */
+    REGISTER_AUTOCORR_DESC("ATSCe1", "Centered EN autocorr lag 1", desc_atsc_e1);
+    REGISTER_AUTOCORR_DESC("ATSCe2", "Centered EN autocorr lag 2", desc_atsc_e2);
+    REGISTER_AUTOCORR_DESC("ATSCe3", "Centered EN autocorr lag 3", desc_atsc_e3);
+    REGISTER_AUTOCORR_DESC("ATSCe4", "Centered EN autocorr lag 4", desc_atsc_e4);
+    REGISTER_AUTOCORR_DESC("ATSCe5", "Centered EN autocorr lag 5", desc_atsc_e5);
+    REGISTER_AUTOCORR_DESC("ATSCe6", "Centered EN autocorr lag 6", desc_atsc_e6);
+    REGISTER_AUTOCORR_DESC("ATSCe7", "Centered EN autocorr lag 7", desc_atsc_e7);
+    REGISTER_AUTOCORR_DESC("ATSCe8", "Centered EN autocorr lag 8", desc_atsc_e8);
+
+    /* ATSCp: Polarizability-weighted centered autocorrelations */
+    REGISTER_AUTOCORR_DESC("ATSCp1", "Centered polariz autocorr lag 1", desc_atsc_p1);
+    REGISTER_AUTOCORR_DESC("ATSCp2", "Centered polariz autocorr lag 2", desc_atsc_p2);
+    REGISTER_AUTOCORR_DESC("ATSCp3", "Centered polariz autocorr lag 3", desc_atsc_p3);
+    REGISTER_AUTOCORR_DESC("ATSCp4", "Centered polariz autocorr lag 4", desc_atsc_p4);
+    REGISTER_AUTOCORR_DESC("ATSCp5", "Centered polariz autocorr lag 5", desc_atsc_p5);
+    REGISTER_AUTOCORR_DESC("ATSCp6", "Centered polariz autocorr lag 6", desc_atsc_p6);
+    REGISTER_AUTOCORR_DESC("ATSCp7", "Centered polariz autocorr lag 7", desc_atsc_p7);
+    REGISTER_AUTOCORR_DESC("ATSCp8", "Centered polariz autocorr lag 8", desc_atsc_p8);
+
+    /* ATSCi: Ionization potential-weighted centered autocorrelations */
+    REGISTER_AUTOCORR_DESC("ATSCi1", "Centered IP autocorr lag 1", desc_atsc_i1);
+    REGISTER_AUTOCORR_DESC("ATSCi2", "Centered IP autocorr lag 2", desc_atsc_i2);
+    REGISTER_AUTOCORR_DESC("ATSCi3", "Centered IP autocorr lag 3", desc_atsc_i3);
+    REGISTER_AUTOCORR_DESC("ATSCi4", "Centered IP autocorr lag 4", desc_atsc_i4);
+    REGISTER_AUTOCORR_DESC("ATSCi5", "Centered IP autocorr lag 5", desc_atsc_i5);
+    REGISTER_AUTOCORR_DESC("ATSCi6", "Centered IP autocorr lag 6", desc_atsc_i6);
+    REGISTER_AUTOCORR_DESC("ATSCi7", "Centered IP autocorr lag 7", desc_atsc_i7);
+    REGISTER_AUTOCORR_DESC("ATSCi8", "Centered IP autocorr lag 8", desc_atsc_i8);
+
+    /* ATSCc: Charge-weighted centered autocorrelations */
+    REGISTER_AUTOCORR_DESC("ATSCc1", "Centered charge autocorr lag 1", desc_atsc_c1);
+    REGISTER_AUTOCORR_DESC("ATSCc2", "Centered charge autocorr lag 2", desc_atsc_c2);
+    REGISTER_AUTOCORR_DESC("ATSCc3", "Centered charge autocorr lag 3", desc_atsc_c3);
+    REGISTER_AUTOCORR_DESC("ATSCc4", "Centered charge autocorr lag 4", desc_atsc_c4);
+    REGISTER_AUTOCORR_DESC("ATSCc5", "Centered charge autocorr lag 5", desc_atsc_c5);
+    REGISTER_AUTOCORR_DESC("ATSCc6", "Centered charge autocorr lag 6", desc_atsc_c6);
+    REGISTER_AUTOCORR_DESC("ATSCc7", "Centered charge autocorr lag 7", desc_atsc_c7);
+    REGISTER_AUTOCORR_DESC("ATSCc8", "Centered charge autocorr lag 8", desc_atsc_c8);
+
+    /* ========== MATS: Moran Autocorrelations ========== */
+
+    /* MATSm: Mass-weighted Moran autocorrelations */
+    REGISTER_AUTOCORR_DESC("MATSm1", "Moran mass autocorr lag 1", desc_mats_m1);
+    REGISTER_AUTOCORR_DESC("MATSm2", "Moran mass autocorr lag 2", desc_mats_m2);
+    REGISTER_AUTOCORR_DESC("MATSm3", "Moran mass autocorr lag 3", desc_mats_m3);
+    REGISTER_AUTOCORR_DESC("MATSm4", "Moran mass autocorr lag 4", desc_mats_m4);
+    REGISTER_AUTOCORR_DESC("MATSm5", "Moran mass autocorr lag 5", desc_mats_m5);
+    REGISTER_AUTOCORR_DESC("MATSm6", "Moran mass autocorr lag 6", desc_mats_m6);
+    REGISTER_AUTOCORR_DESC("MATSm7", "Moran mass autocorr lag 7", desc_mats_m7);
+    REGISTER_AUTOCORR_DESC("MATSm8", "Moran mass autocorr lag 8", desc_mats_m8);
+
+    /* MATSv: Volume-weighted Moran autocorrelations */
+    REGISTER_AUTOCORR_DESC("MATSv1", "Moran volume autocorr lag 1", desc_mats_v1);
+    REGISTER_AUTOCORR_DESC("MATSv2", "Moran volume autocorr lag 2", desc_mats_v2);
+    REGISTER_AUTOCORR_DESC("MATSv3", "Moran volume autocorr lag 3", desc_mats_v3);
+    REGISTER_AUTOCORR_DESC("MATSv4", "Moran volume autocorr lag 4", desc_mats_v4);
+    REGISTER_AUTOCORR_DESC("MATSv5", "Moran volume autocorr lag 5", desc_mats_v5);
+    REGISTER_AUTOCORR_DESC("MATSv6", "Moran volume autocorr lag 6", desc_mats_v6);
+    REGISTER_AUTOCORR_DESC("MATSv7", "Moran volume autocorr lag 7", desc_mats_v7);
+    REGISTER_AUTOCORR_DESC("MATSv8", "Moran volume autocorr lag 8", desc_mats_v8);
+
+    /* MATSe: Electronegativity-weighted Moran autocorrelations */
+    REGISTER_AUTOCORR_DESC("MATSe1", "Moran EN autocorr lag 1", desc_mats_e1);
+    REGISTER_AUTOCORR_DESC("MATSe2", "Moran EN autocorr lag 2", desc_mats_e2);
+    REGISTER_AUTOCORR_DESC("MATSe3", "Moran EN autocorr lag 3", desc_mats_e3);
+    REGISTER_AUTOCORR_DESC("MATSe4", "Moran EN autocorr lag 4", desc_mats_e4);
+    REGISTER_AUTOCORR_DESC("MATSe5", "Moran EN autocorr lag 5", desc_mats_e5);
+    REGISTER_AUTOCORR_DESC("MATSe6", "Moran EN autocorr lag 6", desc_mats_e6);
+    REGISTER_AUTOCORR_DESC("MATSe7", "Moran EN autocorr lag 7", desc_mats_e7);
+    REGISTER_AUTOCORR_DESC("MATSe8", "Moran EN autocorr lag 8", desc_mats_e8);
+
+    /* MATSp: Polarizability-weighted Moran autocorrelations */
+    REGISTER_AUTOCORR_DESC("MATSp1", "Moran polariz autocorr lag 1", desc_mats_p1);
+    REGISTER_AUTOCORR_DESC("MATSp2", "Moran polariz autocorr lag 2", desc_mats_p2);
+    REGISTER_AUTOCORR_DESC("MATSp3", "Moran polariz autocorr lag 3", desc_mats_p3);
+    REGISTER_AUTOCORR_DESC("MATSp4", "Moran polariz autocorr lag 4", desc_mats_p4);
+    REGISTER_AUTOCORR_DESC("MATSp5", "Moran polariz autocorr lag 5", desc_mats_p5);
+    REGISTER_AUTOCORR_DESC("MATSp6", "Moran polariz autocorr lag 6", desc_mats_p6);
+    REGISTER_AUTOCORR_DESC("MATSp7", "Moran polariz autocorr lag 7", desc_mats_p7);
+    REGISTER_AUTOCORR_DESC("MATSp8", "Moran polariz autocorr lag 8", desc_mats_p8);
+
+    /* MATSi: Ionization potential-weighted Moran autocorrelations */
+    REGISTER_AUTOCORR_DESC("MATSi1", "Moran IP autocorr lag 1", desc_mats_i1);
+    REGISTER_AUTOCORR_DESC("MATSi2", "Moran IP autocorr lag 2", desc_mats_i2);
+    REGISTER_AUTOCORR_DESC("MATSi3", "Moran IP autocorr lag 3", desc_mats_i3);
+    REGISTER_AUTOCORR_DESC("MATSi4", "Moran IP autocorr lag 4", desc_mats_i4);
+    REGISTER_AUTOCORR_DESC("MATSi5", "Moran IP autocorr lag 5", desc_mats_i5);
+    REGISTER_AUTOCORR_DESC("MATSi6", "Moran IP autocorr lag 6", desc_mats_i6);
+    REGISTER_AUTOCORR_DESC("MATSi7", "Moran IP autocorr lag 7", desc_mats_i7);
+    REGISTER_AUTOCORR_DESC("MATSi8", "Moran IP autocorr lag 8", desc_mats_i8);
+
+    /* MATSc: Charge-weighted Moran autocorrelations */
+    REGISTER_AUTOCORR_DESC("MATSc1", "Moran charge autocorr lag 1", desc_mats_c1);
+    REGISTER_AUTOCORR_DESC("MATSc2", "Moran charge autocorr lag 2", desc_mats_c2);
+    REGISTER_AUTOCORR_DESC("MATSc3", "Moran charge autocorr lag 3", desc_mats_c3);
+    REGISTER_AUTOCORR_DESC("MATSc4", "Moran charge autocorr lag 4", desc_mats_c4);
+    REGISTER_AUTOCORR_DESC("MATSc5", "Moran charge autocorr lag 5", desc_mats_c5);
+    REGISTER_AUTOCORR_DESC("MATSc6", "Moran charge autocorr lag 6", desc_mats_c6);
+    REGISTER_AUTOCORR_DESC("MATSc7", "Moran charge autocorr lag 7", desc_mats_c7);
+    REGISTER_AUTOCORR_DESC("MATSc8", "Moran charge autocorr lag 8", desc_mats_c8);
+
+    /* ========== GATS: Geary Autocorrelations ========== */
+
+    /* GATSm: Mass-weighted Geary autocorrelations */
+    REGISTER_AUTOCORR_DESC("GATSm1", "Geary mass autocorr lag 1", desc_gats_m1);
+    REGISTER_AUTOCORR_DESC("GATSm2", "Geary mass autocorr lag 2", desc_gats_m2);
+    REGISTER_AUTOCORR_DESC("GATSm3", "Geary mass autocorr lag 3", desc_gats_m3);
+    REGISTER_AUTOCORR_DESC("GATSm4", "Geary mass autocorr lag 4", desc_gats_m4);
+    REGISTER_AUTOCORR_DESC("GATSm5", "Geary mass autocorr lag 5", desc_gats_m5);
+    REGISTER_AUTOCORR_DESC("GATSm6", "Geary mass autocorr lag 6", desc_gats_m6);
+    REGISTER_AUTOCORR_DESC("GATSm7", "Geary mass autocorr lag 7", desc_gats_m7);
+    REGISTER_AUTOCORR_DESC("GATSm8", "Geary mass autocorr lag 8", desc_gats_m8);
+
+    /* GATSv: Volume-weighted Geary autocorrelations */
+    REGISTER_AUTOCORR_DESC("GATSv1", "Geary volume autocorr lag 1", desc_gats_v1);
+    REGISTER_AUTOCORR_DESC("GATSv2", "Geary volume autocorr lag 2", desc_gats_v2);
+    REGISTER_AUTOCORR_DESC("GATSv3", "Geary volume autocorr lag 3", desc_gats_v3);
+    REGISTER_AUTOCORR_DESC("GATSv4", "Geary volume autocorr lag 4", desc_gats_v4);
+    REGISTER_AUTOCORR_DESC("GATSv5", "Geary volume autocorr lag 5", desc_gats_v5);
+    REGISTER_AUTOCORR_DESC("GATSv6", "Geary volume autocorr lag 6", desc_gats_v6);
+    REGISTER_AUTOCORR_DESC("GATSv7", "Geary volume autocorr lag 7", desc_gats_v7);
+    REGISTER_AUTOCORR_DESC("GATSv8", "Geary volume autocorr lag 8", desc_gats_v8);
+
+    /* GATSe: Electronegativity-weighted Geary autocorrelations */
+    REGISTER_AUTOCORR_DESC("GATSe1", "Geary EN autocorr lag 1", desc_gats_e1);
+    REGISTER_AUTOCORR_DESC("GATSe2", "Geary EN autocorr lag 2", desc_gats_e2);
+    REGISTER_AUTOCORR_DESC("GATSe3", "Geary EN autocorr lag 3", desc_gats_e3);
+    REGISTER_AUTOCORR_DESC("GATSe4", "Geary EN autocorr lag 4", desc_gats_e4);
+    REGISTER_AUTOCORR_DESC("GATSe5", "Geary EN autocorr lag 5", desc_gats_e5);
+    REGISTER_AUTOCORR_DESC("GATSe6", "Geary EN autocorr lag 6", desc_gats_e6);
+    REGISTER_AUTOCORR_DESC("GATSe7", "Geary EN autocorr lag 7", desc_gats_e7);
+    REGISTER_AUTOCORR_DESC("GATSe8", "Geary EN autocorr lag 8", desc_gats_e8);
+
+    /* GATSp: Polarizability-weighted Geary autocorrelations */
+    REGISTER_AUTOCORR_DESC("GATSp1", "Geary polariz autocorr lag 1", desc_gats_p1);
+    REGISTER_AUTOCORR_DESC("GATSp2", "Geary polariz autocorr lag 2", desc_gats_p2);
+    REGISTER_AUTOCORR_DESC("GATSp3", "Geary polariz autocorr lag 3", desc_gats_p3);
+    REGISTER_AUTOCORR_DESC("GATSp4", "Geary polariz autocorr lag 4", desc_gats_p4);
+    REGISTER_AUTOCORR_DESC("GATSp5", "Geary polariz autocorr lag 5", desc_gats_p5);
+    REGISTER_AUTOCORR_DESC("GATSp6", "Geary polariz autocorr lag 6", desc_gats_p6);
+    REGISTER_AUTOCORR_DESC("GATSp7", "Geary polariz autocorr lag 7", desc_gats_p7);
+    REGISTER_AUTOCORR_DESC("GATSp8", "Geary polariz autocorr lag 8", desc_gats_p8);
+
+    /* GATSi: Ionization potential-weighted Geary autocorrelations */
+    REGISTER_AUTOCORR_DESC("GATSi1", "Geary IP autocorr lag 1", desc_gats_i1);
+    REGISTER_AUTOCORR_DESC("GATSi2", "Geary IP autocorr lag 2", desc_gats_i2);
+    REGISTER_AUTOCORR_DESC("GATSi3", "Geary IP autocorr lag 3", desc_gats_i3);
+    REGISTER_AUTOCORR_DESC("GATSi4", "Geary IP autocorr lag 4", desc_gats_i4);
+    REGISTER_AUTOCORR_DESC("GATSi5", "Geary IP autocorr lag 5", desc_gats_i5);
+    REGISTER_AUTOCORR_DESC("GATSi6", "Geary IP autocorr lag 6", desc_gats_i6);
+    REGISTER_AUTOCORR_DESC("GATSi7", "Geary IP autocorr lag 7", desc_gats_i7);
+    REGISTER_AUTOCORR_DESC("GATSi8", "Geary IP autocorr lag 8", desc_gats_i8);
+
+    /* GATSc: Charge-weighted Geary autocorrelations */
+    REGISTER_AUTOCORR_DESC("GATSc1", "Geary charge autocorr lag 1", desc_gats_c1);
+    REGISTER_AUTOCORR_DESC("GATSc2", "Geary charge autocorr lag 2", desc_gats_c2);
+    REGISTER_AUTOCORR_DESC("GATSc3", "Geary charge autocorr lag 3", desc_gats_c3);
+    REGISTER_AUTOCORR_DESC("GATSc4", "Geary charge autocorr lag 4", desc_gats_c4);
+    REGISTER_AUTOCORR_DESC("GATSc5", "Geary charge autocorr lag 5", desc_gats_c5);
+    REGISTER_AUTOCORR_DESC("GATSc6", "Geary charge autocorr lag 6", desc_gats_c6);
+    REGISTER_AUTOCORR_DESC("GATSc7", "Geary charge autocorr lag 7", desc_gats_c7);
+    REGISTER_AUTOCORR_DESC("GATSc8", "Geary charge autocorr lag 8", desc_gats_c8);
 }
