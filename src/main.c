@@ -1017,44 +1017,51 @@ static int cmd_compute(int argc, char* argv[]) {
 
 static void print_depict_usage(const char* prog_name) {
     printf("Usage: %s depict [options]\n\n", prog_name);
-    printf("Generate molecular structure images from SMILES\n\n");
-    printf("Options:\n");
-    printf("  -S, --smiles <SMILES>   SMILES string to depict (required)\n");
-    printf("  -o, --output <file>     Output image file (required, .jpg/.jpeg/.bmp)\n");
-    printf("  -m, --mode <mode>       Depiction mode: '2d' (classic) or '3d' (MMFF94 optimized)\n");
-    printf("                          Default: 2d\n");
-    printf("  -s, --style <style>     Render style:\n");
-    printf("                            wireframe    - Lines only (default for 2D)\n");
-    printf("                            sticks       - Thick colored bonds\n");
-    printf("                            balls-sticks - Spheres + bonds (default for 3D)\n");
-    printf("                            spacefill    - VDW spheres, no bonds\n");
-    printf("                            surface      - Molecular surface\n");
-    printf("  -W, --width <pixels>    Image width (default: 400)\n");
-    printf("  -H, --height <pixels>   Image height (default: 400)\n");
-    printf("  --bond-length <px>      Bond length in pixels (default: 40)\n");
-    printf("  --bond-width <px>       Bond line width (default: 2.0)\n");
-    printf("  --margin <px>           Margin in pixels (default: 20)\n");
-    printf("  --show-carbons          Show 'C' labels on carbon atoms\n");
-    printf("  --show-hydrogens        Show hydrogen atoms in structure\n");
-    printf("  --toggle-aromaticity    Draw aromatic circles instead of Kekule form\n");
-    printf("  --atom-filling          Draw atoms as filled circles with CPK colors\n");
-    printf("  --proportional-atoms    Scale atom sizes by VDW radius (default: on)\n");
-    printf("  --no-proportional       Disable proportional atom sizing\n");
-    printf("  --surface-color <mode>  Surface coloring (for -s surface):\n");
-    printf("                            uniform  - Single blue color (default)\n");
-    printf("                            atom     - Color by nearest atom element\n");
-    printf("                            polarity - Color by partial charge (red/white/blue)\n");
-    printf("  --font-size <scale>     Font size scale for atom labels (default: 3.0)\n");
+    printf("Generate publication-quality molecular structure images from SMILES\n\n");
+    printf("Required:\n");
+    printf("  -S, --smiles <SMILES>   SMILES string to depict\n");
+    printf("  -o, --output <file>     Output file (.png, .jpg, .svg)\n");
+    printf("\n");
+    printf("Render Style:\n");
+    printf("  -s, --style <style>     wireframe (default), sticks, balls-sticks, spacefill, surface\n");
+    printf("  -m, --mode <mode>       2d (default) or 3d (MMFF94 optimized geometry)\n");
+    printf("\n");
+    printf("Dimensions:\n");
+    printf("  -W, --width <pixels>    Image width (default: 800)\n");
+    printf("  -H, --height <pixels>   Image height (default: 800)\n");
+    printf("  --margin <px>           Margin (default: 50)\n");
+    printf("  --scale <factor>        Resolution multiplier (e.g., 2.0 for 2x)\n");
+    printf("\n");
+    printf("Bond Rendering:\n");
+    printf("  --bond-length <px>      Bond length (default: 35)\n");
+    printf("  --bond-width <px>       Bond line width (default: 1.8)\n");
+    printf("  --heteroatom-gap <0-1>  Gap at heteroatoms (default: 1.0, 0 to disable)\n");
+    printf("  --line-cap <style>      round, butt (default), square\n");
+    printf("\n");
+    printf("Atom Labels:\n");
+    printf("  --show-carbons          Show 'C' labels on carbons\n");
+    printf("  --show-hydrogens        Show hydrogen labels\n");
+    printf("  --terminal-carbons      Show CH3 on terminal carbons\n");
+    printf("  --font-size <scale>     Font size scale (default: 3.5)\n");
+    printf("\n");
+    printf("3D/Surface Options:\n");
+    printf("  --atom-filling          Draw atoms as filled CPK spheres\n");
+    printf("  --proportional-atoms    Scale atoms by VDW radius (default: on)\n");
+    printf("  --no-proportional       Disable proportional sizing\n");
+    printf("  --surface-color <mode>  uniform, atom, polarity (for -s surface)\n");
+    printf("  --max-iter <N>          3D optimization iterations (default: 500)\n");
+    printf("\n");
+    printf("Other:\n");
+    printf("  --toggle-aromaticity    Draw aromatic circles\n");
     printf("  --quality <1-100>       JPEG quality (default: 95)\n");
-    printf("  --max-iter <N>          Max optimization iterations for 3D mode (default: 500)\n");
     printf("  -v, --verbose           Verbose output\n");
-    printf("  -h, --help              Print this help message\n");
+    printf("  -h, --help              Print this help\n");
     printf("\n");
     printf("Examples:\n");
-    printf("  %s depict -S \"c1ccccc1\" -o benzene.jpg\n", prog_name);
-    printf("  %s depict -S \"CCO\" -o ethanol.jpg -m 3d\n", prog_name);
-    printf("  %s depict -S \"CCO\" -o ethanol_balls.jpg -m 3d -s balls-sticks\n", prog_name);
-    printf("  %s depict -S \"CC(=O)Oc1ccccc1C(=O)O\" -o aspirin.jpg -W 600 -H 600\n", prog_name);
+    printf("  %s depict -S \"c1ccccc1\" -o benzene.png\n", prog_name);
+    printf("  %s depict -S \"CCO\" -o ethanol.svg\n", prog_name);
+    printf("  %s depict -S \"CCO\" -o ethanol.png -m 3d -s balls-sticks\n", prog_name);
+    printf("  %s depict -S \"CCO\" -o ethanol.png --scale 2\n", prog_name);
 }
 
 /* Depict command */
@@ -1079,6 +1086,11 @@ static int cmd_depict(int argc, char* argv[]) {
         {"proportional-atoms", no_argument,   0, 1010},
         {"no-proportional", no_argument,      0, 1011},
         {"surface-color",  required_argument, 0, 1012},
+        {"modern",         no_argument,       0, 1013},
+        {"heteroatom-gap", required_argument, 0, 1014},
+        {"scale",          required_argument, 0, 1015},
+        {"line-cap",       required_argument, 0, 1016},
+        {"terminal-carbons", no_argument,     0, 1017},
         {"verbose",        no_argument,       0, 'v'},
         {"help",           no_argument,       0, 'h'},
         {0, 0, 0, 0}
@@ -1193,6 +1205,34 @@ static int cmd_depict(int argc, char* argv[]) {
                     return 1;
                 }
                 break;
+            case 1013:  /* --modern - now default, kept for compatibility */
+                /* Already default, no changes needed */
+                break;
+            case 1014:  /* --heteroatom-gap */
+                options.heteroatom_gap = atof(optarg);
+                if (options.heteroatom_gap < 0.0) options.heteroatom_gap = 0.0;
+                if (options.heteroatom_gap > 1.0) options.heteroatom_gap = 1.0;
+                break;
+            case 1015:  /* --scale */
+                options.scale_factor = atof(optarg);
+                if (options.scale_factor < 0.1) options.scale_factor = 0.1;
+                if (options.scale_factor > 10.0) options.scale_factor = 10.0;
+                break;
+            case 1016:  /* --line-cap */
+                if (strcmp(optarg, "round") == 0) {
+                    options.line_cap = LINE_CAP_ROUND;
+                } else if (strcmp(optarg, "butt") == 0) {
+                    options.line_cap = LINE_CAP_BUTT;
+                } else if (strcmp(optarg, "square") == 0) {
+                    options.line_cap = LINE_CAP_SQUARE;
+                } else {
+                    fprintf(stderr, "Error: Invalid line cap '%s'. Use round, butt, or square.\n", optarg);
+                    return 1;
+                }
+                break;
+            case 1017:  /* --terminal-carbons */
+                options.terminal_carbon_labels = true;
+                break;
             case 'v':
                 verbose = true;
                 break;
@@ -1215,6 +1255,18 @@ static int cmd_depict(int argc, char* argv[]) {
         fprintf(stderr, "Error: Output file required (-o/--output)\n");
         print_depict_usage(argv[0]);
         return 1;
+    }
+
+    /* Auto-detect output format from file extension */
+    const char* ext = strrchr(output_file, '.');
+    if (ext) {
+        if (strcasecmp(ext, ".svg") == 0) {
+            options.format = IMG_FORMAT_SVG;
+        } else if (strcasecmp(ext, ".png") == 0) {
+            options.format = IMG_FORMAT_PNG;
+        } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
+            options.format = IMG_FORMAT_JPEG;
+        }
     }
 
     /* Get render style name */

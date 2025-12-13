@@ -44,8 +44,20 @@ typedef struct {
 
 typedef enum {
     IMG_FORMAT_PNG = 0,
-    IMG_FORMAT_JPEG = 1
+    IMG_FORMAT_JPEG = 1,
+    IMG_FORMAT_SVG = 2
 } image_format_t;
+
+typedef enum {
+    LINE_CAP_ROUND = 0,
+    LINE_CAP_BUTT = 1,
+    LINE_CAP_SQUARE = 2
+} line_cap_t;
+
+typedef enum {
+    DEPICT_STYLE_DEFAULT = 0,     /* Default cchem style with atom circles */
+    DEPICT_STYLE_MODERN = 1       /* Modern publication style: no circles, bond gaps at heteroatoms */
+} depict_style_preset_t;
 
 typedef enum {
     DEPICT_MODE_2D = 0,
@@ -70,6 +82,7 @@ typedef struct {
     depict_mode_t mode;
     render_style_t render_style;
     surface_color_mode_t surface_color;  /* Coloring mode for surface representation */
+    depict_style_preset_t style_preset;  /* Overall style preset (default or chemdraw) */
     int width;
     int height;
     int margin;
@@ -86,18 +99,27 @@ typedef struct {
     int max_iterations;
     image_format_t format;
     int jpeg_quality;
+    /* Publication-quality rendering options */
+    double heteroatom_gap;      /* Gap factor for bonds at heteroatoms (0.0 = no gap, 1.0 = full) */
+    line_cap_t line_cap;        /* Line cap style for bonds */
+    double scale_factor;        /* Resolution scale factor (1.0 = normal, 2.0 = 2x resolution) */
+    double double_bond_offset;  /* Offset for double bonds from center line */
+    double triple_bond_offset;  /* Offset for triple bonds from center line */
+    bool terminal_carbon_labels; /* Show labels on terminal carbons (CH3) */
 } depictor_options_t;
 
+/* Default: Publication-quality rendering */
 #define DEPICTOR_OPTIONS_DEFAULT { \
     .mode = DEPICT_MODE_2D, \
-    .render_style = RENDER_STYLE_STICKS, \
+    .render_style = RENDER_STYLE_WIREFRAME, \
     .surface_color = SURFACE_COLOR_UNIFORM, \
+    .style_preset = DEPICT_STYLE_MODERN, \
     .width = 800, \
     .height = 800, \
-    .margin = 40, \
+    .margin = 50, \
     .bond_length = 35.0, \
     .atom_radius_scale = 0.60, \
-    .bond_width = 2.5, \
+    .bond_width = 1.8, \
     .background = {255, 255, 255}, \
     .show_carbons = false, \
     .show_hydrogens = false, \
@@ -106,8 +128,14 @@ typedef struct {
     .proportional_atoms = true, \
     .font_size = 3.5, \
     .max_iterations = 500, \
-    .format = IMG_FORMAT_JPEG, \
-    .jpeg_quality = 95 \
+    .format = IMG_FORMAT_PNG, \
+    .jpeg_quality = 95, \
+    .heteroatom_gap = 1.0, \
+    .line_cap = LINE_CAP_BUTT, \
+    .scale_factor = 1.0, \
+    .double_bond_offset = 0.12, \
+    .triple_bond_offset = 0.18, \
+    .terminal_carbon_labels = false \
 }
 
 /* ============== Coordinate Management ============== */

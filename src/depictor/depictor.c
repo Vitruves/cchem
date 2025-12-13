@@ -322,21 +322,43 @@ cchem_status_t depict_molecule(const molecule_t* mol, const char* filename,
         return CCHEM_ERROR_MEMORY;
     }
 
-    /* Scale coordinates to fit image */
-    coords2d_scale_to_fit(coords, opts.width, opts.height, opts.margin);
+    /* Apply scale factor for higher resolution output */
+    double scale = (opts.scale_factor > 0.0) ? opts.scale_factor : 1.0;
+    int scaled_width = (int)(opts.width * scale);
+    int scaled_height = (int)(opts.height * scale);
+    int scaled_margin = (int)(opts.margin * scale);
 
-    /* Render */
-    render_context_t* ctx = render_context_create(opts.width, opts.height, opts.background);
+    /* Scale coordinates to fit image */
+    coords2d_scale_to_fit(coords, scaled_width, scaled_height, scaled_margin);
+
+    /* Create scaled options for rendering */
+    depictor_options_t scaled_opts = opts;
+    scaled_opts.bond_width *= scale;
+    scaled_opts.font_size *= scale;
+    scaled_opts.bond_length *= scale;
+
+    /* Render - use appropriate context for format */
+    render_context_t* ctx = NULL;
+    if (opts.format == IMG_FORMAT_SVG) {
+        ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
+                                        IMG_FORMAT_SVG, filename);
+    } else {
+        ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
+                                        IMG_FORMAT_PNG, NULL);
+    }
+
     if (!ctx) {
         mol_coords_free(coords);
         molecule_free(work_mol);
         return CCHEM_ERROR_MEMORY;
     }
 
-    cchem_status_t status = render_molecule(ctx, work_mol, coords, &opts);
+    cchem_status_t status = render_molecule(ctx, work_mol, coords, &scaled_opts);
 
     if (status == CCHEM_OK) {
-        if (opts.format == IMG_FORMAT_PNG) {
+        if (opts.format == IMG_FORMAT_SVG) {
+            status = render_save_svg(ctx, filename);
+        } else if (opts.format == IMG_FORMAT_PNG) {
             status = render_save_png(ctx, filename);
         } else {
             status = render_save_jpeg(ctx, filename, opts.jpeg_quality);
@@ -462,11 +484,31 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
         effective_margin = opts.margin + opts.width / 6;
     }
 
-    /* Scale coordinates to fit image */
-    coords2d_scale_to_fit(coords, opts.width, opts.height, effective_margin);
+    /* Apply scale factor for higher resolution output */
+    double scale = (opts.scale_factor > 0.0) ? opts.scale_factor : 1.0;
+    int scaled_width = (int)(opts.width * scale);
+    int scaled_height = (int)(opts.height * scale);
+    int scaled_margin = (int)(effective_margin * scale);
 
-    /* Render */
-    render_context_t* ctx = render_context_create(opts.width, opts.height, opts.background);
+    /* Scale coordinates to fit image */
+    coords2d_scale_to_fit(coords, scaled_width, scaled_height, scaled_margin);
+
+    /* Create scaled options for rendering */
+    depictor_options_t scaled_opts = opts;
+    scaled_opts.bond_width *= scale;
+    scaled_opts.font_size *= scale;
+    scaled_opts.bond_length *= scale;
+
+    /* Render - use appropriate context for format */
+    render_context_t* ctx = NULL;
+    if (opts.format == IMG_FORMAT_SVG) {
+        ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
+                                        IMG_FORMAT_SVG, filename);
+    } else {
+        ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
+                                        IMG_FORMAT_PNG, NULL);
+    }
+
     if (!ctx) {
         mol_coords_free(coords);
         molecule_free(work_mol);
@@ -474,10 +516,12 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
         return CCHEM_ERROR_MEMORY;
     }
 
-    cchem_status_t status = render_molecule(ctx, work_mol, coords, &opts);
+    cchem_status_t status = render_molecule(ctx, work_mol, coords, &scaled_opts);
 
     if (status == CCHEM_OK) {
-        if (opts.format == IMG_FORMAT_PNG) {
+        if (opts.format == IMG_FORMAT_SVG) {
+            status = render_save_svg(ctx, filename);
+        } else if (opts.format == IMG_FORMAT_PNG) {
             status = render_save_png(ctx, filename);
         } else {
             status = render_save_jpeg(ctx, filename, opts.jpeg_quality);

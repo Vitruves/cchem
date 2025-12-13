@@ -8,6 +8,7 @@
 #include "cchem/canonicalizer/element.h"
 #include "cchem/canonicalizer/bond.h"
 #include <cairo/cairo.h>
+#include <cairo/cairo-svg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,16 +24,35 @@ struct render_context {
     int width;
     int height;
     rgb_color_t background;
+    image_format_t format;
+    char* svg_filename;
 };
 
 /* ============== Context Management ============== */
 
 render_context_t* render_context_create(int width, int height, rgb_color_t background) {
+    return render_context_create_ex(width, height, background, IMG_FORMAT_PNG, NULL);
+}
+
+render_context_t* render_context_create_ex(int width, int height, rgb_color_t background,
+                                            image_format_t format, const char* svg_filename) {
     render_context_t* ctx = calloc(1, sizeof(render_context_t));
     if (!ctx) return NULL;
 
-    ctx->surface = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+    ctx->format = format;
+    ctx->width = width;
+    ctx->height = height;
+    ctx->background = background;
+    ctx->svg_filename = svg_filename ? strdup(svg_filename) : NULL;
+
+    if (format == IMG_FORMAT_SVG && svg_filename) {
+        ctx->surface = cairo_svg_surface_create(svg_filename, width, height);
+    } else {
+        ctx->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    }
+
     if (cairo_surface_status(ctx->surface) != CAIRO_STATUS_SUCCESS) {
+        free(ctx->svg_filename);
         free(ctx);
         return NULL;
     }
@@ -40,14 +60,15 @@ render_context_t* render_context_create(int width, int height, rgb_color_t backg
     ctx->cr = cairo_create(ctx->surface);
     if (cairo_status(ctx->cr) != CAIRO_STATUS_SUCCESS) {
         cairo_surface_destroy(ctx->surface);
+        free(ctx->svg_filename);
         free(ctx);
         return NULL;
     }
 
-    ctx->width = width;
-    ctx->height = height;
-    ctx->background = background;
+    /* Enable best quality anti-aliasing */
+    cairo_set_antialias(ctx->cr, CAIRO_ANTIALIAS_BEST);
 
+    /* Fill background */
     cairo_set_source_rgb(ctx->cr,
                         background.r / 255.0,
                         background.g / 255.0,
@@ -61,6 +82,7 @@ void render_context_free(render_context_t* ctx) {
     if (!ctx) return;
     if (ctx->cr) cairo_destroy(ctx->cr);
     if (ctx->surface) cairo_surface_destroy(ctx->surface);
+    free(ctx->svg_filename);
     free(ctx);
 }
 
@@ -70,12 +92,64 @@ static void set_color(cairo_t* cr, rgb_color_t color) {
     cairo_set_source_rgb(cr, color.r / 255.0, color.g / 255.0, color.b / 255.0);
 }
 
+static cairo_line_cap_t get_cairo_line_cap(line_cap_t cap) {
+    switch (cap) {
+        case LINE_CAP_BUTT:   return CAIRO_LINE_CAP_BUTT;
+        case LINE_CAP_SQUARE: return CAIRO_LINE_CAP_SQUARE;
+        case LINE_CAP_ROUND:
+        default:              return CAIRO_LINE_CAP_ROUND;
+    }
+}
+
 static void draw_line(cairo_t* cr, point2d_t p1, point2d_t p2, double width) {
     cairo_set_line_width(cr, width);
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
     cairo_move_to(cr, p1.x, p1.y);
     cairo_line_to(cr, p2.x, p2.y);
     cairo_stroke(cr);
+}
+
+static void draw_line_ex(cairo_t* cr, point2d_t p1, point2d_t p2, double width, line_cap_t cap) {
+    cairo_set_line_width(cr, width);
+    cairo_set_line_cap(cr, get_cairo_line_cap(cap));
+    cairo_move_to(cr, p1.x, p1.y);
+    cairo_line_to(cr, p2.x, p2.y);
+    cairo_stroke(cr);
+}
+
+/* Calculate bond gap endpoints for modern style (bond shortening at heteroatoms) */
+void calculate_bond_gap(point2d_t p1, point2d_t p2,
+                        bool gap_at_p1, bool gap_at_p2,
+                        double gap_factor, double font_size,
+                        point2d_t* out_p1, point2d_t* out_p2) {
+    double len = point2d_distance(p1, p2);
+    if (len < 0.001) {
+        *out_p1 = p1;
+        *out_p2 = p2;
+        return;
+    }
+
+    point2d_t dir = point2d_sub(p2, p1);
+    dir = point2d_scale(dir, 1.0 / len);
+
+    /* Gap size must be large enough to clear the atom label
+     * font_size * 9.0 is the actual rendered font size in render_atom_label_modern
+     * We need gap to be roughly half the text height plus some margin */
+    double actual_font = font_size * 9.0;
+    double gap_size = actual_font * 0.6 * gap_factor;
+
+    double t1 = gap_at_p1 ? (gap_size / len) : 0.0;
+    double t2 = gap_at_p2 ? (gap_size / len) : 0.0;
+
+    /* Ensure we don't create too-short bonds */
+    if (t1 + t2 >= 0.8) {
+        double total = t1 + t2;
+        t1 = t1 / total * 0.4;
+        t2 = t2 / total * 0.4;
+    }
+
+    *out_p1 = point2d_add(p1, point2d_scale(dir, len * t1));
+    *out_p2 = point2d_sub(p2, point2d_scale(dir, len * t2));
 }
 
 static void draw_text(cairo_t* cr, const char* text, point2d_t pos, double font_size) {
@@ -206,7 +280,26 @@ static double get_atom_render_radius(const atom_t* atom, const depictor_options_
     }
 }
 
-static bool should_show_label(const atom_t* atom, const depictor_options_t* opts) {
+/* Check if atom is a terminal carbon (connected to only one heavy atom) */
+static bool is_terminal_carbon(const molecule_t* mol, int atom_idx) {
+    if (mol->atoms[atom_idx].element != ELEM_C) return false;
+
+    int heavy_neighbors = 0;
+    for (int b = 0; b < mol->num_bonds; b++) {
+        const bond_t* bond = &mol->bonds[b];
+        int other = -1;
+        if (bond->atom1 == atom_idx) other = bond->atom2;
+        else if (bond->atom2 == atom_idx) other = bond->atom1;
+
+        if (other >= 0 && mol->atoms[other].element != ELEM_H) {
+            heavy_neighbors++;
+        }
+    }
+    return heavy_neighbors <= 1;
+}
+
+static bool should_show_label_ex(const atom_t* atom, const depictor_options_t* opts,
+                                  const molecule_t* mol, int atom_idx) {
     /* In spacefill mode, labels are optional overlays */
     if (opts->render_style == RENDER_STYLE_SPACEFILL) {
         return opts->show_carbons || atom->element != ELEM_C;
@@ -214,7 +307,17 @@ static bool should_show_label(const atom_t* atom, const depictor_options_t* opts
     if (opts->show_carbons) return true;
     if (atom->element != ELEM_C) return true;
     if (opts->show_hydrogens && atom->implicit_h_count > 0) return true;
+    /* For modern style, optionally show terminal carbons as CH3 labels */
+    if (opts->terminal_carbon_labels && mol && atom->element == ELEM_C) {
+        if (is_terminal_carbon(mol, atom_idx) && atom->implicit_h_count >= 3) {
+            return true;
+        }
+    }
     return false;
+}
+
+static bool should_show_label(const atom_t* atom, const depictor_options_t* opts) {
+    return should_show_label_ex(atom, opts, NULL, -1);
 }
 
 /* Render atom as filled sphere with 3D shading effect */
@@ -255,6 +358,46 @@ static void render_atom_sphere(cairo_t* cr, const atom_t* atom, point2d_t pos,
     cairo_stroke(cr);
 }
 
+/* Render atom label in modern style (no circle background, just colored text) */
+static void render_atom_label_modern(cairo_t* cr, const atom_t* atom, point2d_t pos,
+                                      const depictor_options_t* opts,
+                                      rgb_color_t bg __attribute__((unused))) {
+    const char* symbol = element_to_symbol(atom->element);
+    char label[32];
+
+    /* Build label with hydrogens if needed */
+    if (opts->show_hydrogens && atom->implicit_h_count > 0) {
+        if (atom->implicit_h_count == 1)
+            snprintf(label, sizeof(label), "%sH", symbol);
+        else
+            snprintf(label, sizeof(label), "%sH%d", symbol, atom->implicit_h_count);
+    } else if (atom->element == ELEM_C && atom->implicit_h_count >= 3) {
+        /* Terminal carbon shown as CH3 */
+        snprintf(label, sizeof(label), "CH%d", atom->implicit_h_count);
+    } else {
+        snprintf(label, sizeof(label), "%s", symbol);
+    }
+
+    double font_size = opts->font_size * 9.0;
+
+    cairo_text_extents_t extents;
+    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_set_font_size(cr, font_size);
+    cairo_text_extents(cr, label, &extents);
+
+    /* No background - the bond gaps provide the clearance */
+
+    /* Draw colored text */
+    rgb_color_t color = atom_get_color(atom->element);
+    set_color(cr, color);
+
+    /* Center the text properly */
+    cairo_move_to(cr,
+                 pos.x - extents.width / 2.0 - extents.x_bearing,
+                 pos.y - extents.height / 2.0 - extents.y_bearing);
+    cairo_show_text(cr, label);
+}
+
 static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
                               const depictor_options_t* opts, rgb_color_t bg,
                               double base_scale) {
@@ -289,9 +432,16 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
         return;
     }
 
-    /* Standard label rendering for wireframe/sticks */
+    /* Check if we should show this label */
     if (!should_show_label(atom, opts)) return;
 
+    /* Modern style: no circle, just text with background */
+    if (opts->style_preset == DEPICT_STYLE_MODERN) {
+        render_atom_label_modern(cr, atom, pos, opts, bg);
+        return;
+    }
+
+    /* Default style: circle background */
     const char* symbol = element_to_symbol(atom->element);
     char label[32];
 
@@ -329,10 +479,56 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
     draw_text(cr, label, pos, font_size);
 }
 
+/* Extended version that handles terminal carbons for modern style */
+static void render_atom_label_ex(cairo_t* cr, const molecule_t* mol, int atom_idx,
+                                  point2d_t pos, const depictor_options_t* opts,
+                                  rgb_color_t bg, double base_scale) {
+    const atom_t* atom = &mol->atoms[atom_idx];
+
+    bool show_sphere = (opts->render_style == RENDER_STYLE_BALLS_AND_STICKS ||
+                        opts->render_style == RENDER_STYLE_SPACEFILL ||
+                        opts->atom_filling);
+
+    double radius = get_atom_render_radius(atom, opts, base_scale);
+
+    if (show_sphere && radius > 0) {
+        render_atom_sphere(cr, atom, pos, radius, opts);
+        if (should_show_label_ex(atom, opts, mol, atom_idx) &&
+            opts->render_style != RENDER_STYLE_SPACEFILL) {
+            double font_size = opts->font_size * 8.0;
+            const char* symbol = element_to_symbol(atom->element);
+            char label[32];
+
+            if (opts->show_hydrogens && atom->implicit_h_count > 0) {
+                if (atom->implicit_h_count == 1)
+                    snprintf(label, sizeof(label), "%sH", symbol);
+                else
+                    snprintf(label, sizeof(label), "%sH%d", symbol, atom->implicit_h_count);
+            } else {
+                snprintf(label, sizeof(label), "%s", symbol);
+            }
+
+            cairo_set_source_rgb(cr, 1, 1, 1);
+            draw_text(cr, label, pos, font_size);
+        }
+        return;
+    }
+
+    if (!should_show_label_ex(atom, opts, mol, atom_idx)) return;
+
+    if (opts->style_preset == DEPICT_STYLE_MODERN) {
+        render_atom_label_modern(cr, atom, pos, opts, bg);
+        return;
+    }
+
+    /* Fallback to standard label */
+    render_atom_label(cr, atom, pos, opts, bg, base_scale);
+}
+
 /* ============== Stick Bond Rendering (colored by element) ============== */
 
-static void render_stick_bond(cairo_t* cr, const molecule_t* mol, const bond_t* bond,
-                               point2d_t p1, point2d_t p2, double width) {
+static void render_stick_bond_ex(cairo_t* cr, const molecule_t* mol, const bond_t* bond,
+                                  point2d_t p1, point2d_t p2, double width, line_cap_t cap) {
     /* Color each half of the bond by the atom's element color */
     point2d_t mid = {(p1.x + p2.x) / 2.0, (p1.y + p2.y) / 2.0};
 
@@ -340,7 +536,7 @@ static void render_stick_bond(cairo_t* cr, const molecule_t* mol, const bond_t* 
     rgb_color_t c2 = atom_get_color(mol->atoms[bond->atom2].element);
 
     cairo_set_line_width(cr, width);
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_cap(cr, get_cairo_line_cap(cap));
 
     /* First half */
     set_color(cr, c1);
@@ -353,6 +549,11 @@ static void render_stick_bond(cairo_t* cr, const molecule_t* mol, const bond_t* 
     cairo_move_to(cr, mid.x, mid.y);
     cairo_line_to(cr, p2.x, p2.y);
     cairo_stroke(cr);
+}
+
+static void render_stick_bond(cairo_t* cr, const molecule_t* mol, const bond_t* bond,
+                               point2d_t p1, point2d_t p2, double width) {
+    render_stick_bond_ex(cr, mol, bond, p1, p2, width, LINE_CAP_ROUND);
 }
 
 /* ============== Surface Rendering (Smooth molecular surface) ============== */
@@ -693,6 +894,94 @@ static void render_molecular_surface(cairo_t* cr, const molecule_t* mol,
 
 /* ============== Main Rendering ============== */
 
+/* Helper: check if an atom should have a bond gap (is labeled) */
+static bool needs_bond_gap(const molecule_t* mol, int atom_idx, const depictor_options_t* opts) {
+    if (opts->heteroatom_gap <= 0.0) return false;
+
+    const atom_t* atom = &mol->atoms[atom_idx];
+
+    /* Heteroatoms always get gaps */
+    if (atom->element != ELEM_C) return true;
+
+    /* Terminal carbons with labels get gaps */
+    if (opts->terminal_carbon_labels && is_terminal_carbon(mol, atom_idx) &&
+        atom->implicit_h_count >= 3) {
+        return true;
+    }
+
+    /* Show carbons option */
+    if (opts->show_carbons) return true;
+
+    return false;
+}
+
+/* Render bond with modern style (gaps at labeled atoms) */
+static void render_bond_modern(cairo_t* cr, const molecule_t* mol, const bond_t* bond,
+                                point2d_t p1, point2d_t p2, int order, double width,
+                                const depictor_options_t* opts) {
+    int i = bond->atom1;
+    int j = bond->atom2;
+
+    bool gap1 = needs_bond_gap(mol, i, opts);
+    bool gap2 = needs_bond_gap(mol, j, opts);
+
+    rgb_color_t black = {0, 0, 0};
+    set_color(cr, black);
+
+    double dbl_offset = opts->double_bond_offset * opts->bond_length;
+    double trpl_offset = opts->triple_bond_offset * opts->bond_length;
+
+    if (order == 1) {
+        point2d_t gp1, gp2;
+        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
+        draw_line_ex(cr, gp1, gp2, width, opts->line_cap);
+    }
+    else if (order == 2) {
+        /* For double bonds: draw both lines from atom centers, with gaps applied
+         * to the conceptual center line position, then offset */
+        point2d_t dir = point2d_sub(p2, p1);
+        point2d_t perp = point2d_normalize(point2d_perp(dir));
+        point2d_t offset = point2d_scale(perp, dbl_offset);
+
+        /* Calculate gap on the center line */
+        point2d_t gp1, gp2;
+        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
+
+        /* Then offset both lines from the gapped center */
+        point2d_t gp1a = point2d_add(gp1, offset);
+        point2d_t gp2a = point2d_add(gp2, offset);
+        point2d_t gp1b = point2d_sub(gp1, offset);
+        point2d_t gp2b = point2d_sub(gp2, offset);
+
+        draw_line_ex(cr, gp1a, gp2a, width, opts->line_cap);
+        draw_line_ex(cr, gp1b, gp2b, width, opts->line_cap);
+    }
+    else if (order == 3) {
+        point2d_t dir = point2d_sub(p2, p1);
+        point2d_t perp = point2d_normalize(point2d_perp(dir));
+        point2d_t offset = point2d_scale(perp, trpl_offset);
+
+        /* Calculate gap on the center line */
+        point2d_t gp1, gp2;
+        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
+
+        /* Center line and offset lines */
+        point2d_t gp1a = point2d_add(gp1, offset);
+        point2d_t gp2a = point2d_add(gp2, offset);
+        point2d_t gp1b = point2d_sub(gp1, offset);
+        point2d_t gp2b = point2d_sub(gp2, offset);
+
+        draw_line_ex(cr, gp1, gp2, width, opts->line_cap);
+        draw_line_ex(cr, gp1a, gp2a, width, opts->line_cap);
+        draw_line_ex(cr, gp1b, gp2b, width, opts->line_cap);
+    }
+    else {
+        point2d_t gp1, gp2;
+        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
+        draw_line_ex(cr, gp1, gp2, width, opts->line_cap);
+    }
+}
+
 cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
                                const mol_coords_t* coords, const depictor_options_t* opts) {
     if (!ctx || !mol || !coords || !opts) return CCHEM_ERROR_INVALID_INPUT;
@@ -720,10 +1009,13 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
     /* Determine bond width based on style */
     double bond_width = opts->bond_width;
     if (opts->render_style == RENDER_STYLE_BALLS_AND_STICKS) {
-        bond_width = opts->bond_width * 1.5;
+        bond_width = opts->bond_width * 3.0;  /* Thick bonds for balls-and-sticks */
     } else if (opts->render_style == RENDER_STYLE_STICKS) {
-        bond_width = opts->bond_width * 2.0;
+        bond_width = opts->bond_width * 2.5;  /* Medium-thick for sticks */
     }
+
+    /* Always apply bond gaps at heteroatoms when gap > 0 */
+    bool apply_gaps = (opts->heteroatom_gap > 0.0);
 
     /* Draw bonds first (unless spacefill mode) */
     if (opts->render_style != RENDER_STYLE_SPACEFILL) {
@@ -735,64 +1027,96 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
             point2d_t p1 = coords->coords_2d[i];
             point2d_t p2 = coords->coords_2d[j];
 
+            /* Calculate gaps at heteroatoms */
+            bool gap1 = apply_gaps && needs_bond_gap(mol, i, opts);
+            bool gap2 = apply_gaps && needs_bond_gap(mol, j, opts);
+            point2d_t gp1, gp2;
+            calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
+
             int order = bond_get_int_order(bond);
             bool use_colored_sticks = (opts->render_style == RENDER_STYLE_STICKS ||
                                        opts->render_style == RENDER_STYLE_BALLS_AND_STICKS);
 
+            double dbl_offset = opts->double_bond_offset * opts->bond_length;
+            double trpl_offset = opts->triple_bond_offset * opts->bond_length;
+
             /* Check stereochemistry */
             if (bond->stereo_type == BOND_UP) {
                 point2d_t stereo_p1 = p1, stereo_p2 = p2;
-                if (bond->stereo_atom == j) { stereo_p1 = p2; stereo_p2 = p1; }
-                render_wedge_bond(ctx->cr, stereo_p1, stereo_p2, bond_width);
+                point2d_t stereo_gp1 = gp1, stereo_gp2 = gp2;
+                if (bond->stereo_atom == j) {
+                    stereo_p1 = p2; stereo_p2 = p1;
+                    stereo_gp1 = gp2; stereo_gp2 = gp1;
+                }
+                render_wedge_bond(ctx->cr, stereo_gp1, stereo_gp2, bond_width);
             }
             else if (bond->stereo_type == BOND_DOWN) {
                 point2d_t stereo_p1 = p1, stereo_p2 = p2;
-                if (bond->stereo_atom == j) { stereo_p1 = p2; stereo_p2 = p1; }
-                render_dash_bond(ctx->cr, stereo_p1, stereo_p2, bond_width);
+                point2d_t stereo_gp1 = gp1, stereo_gp2 = gp2;
+                if (bond->stereo_atom == j) {
+                    stereo_p1 = p2; stereo_p2 = p1;
+                    stereo_gp1 = gp2; stereo_gp2 = gp1;
+                }
+                render_dash_bond(ctx->cr, stereo_gp1, stereo_gp2, bond_width);
             }
             else if (use_colored_sticks && order == 1) {
-                render_stick_bond(ctx->cr, mol, bond, p1, p2, bond_width);
+                render_stick_bond_ex(ctx->cr, mol, bond, gp1, gp2, bond_width, opts->line_cap);
             }
             else if (order == 1) {
-                render_single_bond(ctx->cr, p1, p2, bond_width);
+                rgb_color_t black = {0, 0, 0};
+                set_color(ctx->cr, black);
+                draw_line_ex(ctx->cr, gp1, gp2, bond_width, opts->line_cap);
             }
             else if (order == 2) {
+                point2d_t dir = point2d_sub(p2, p1);
+                point2d_t perp = point2d_normalize(point2d_perp(dir));
+                point2d_t offset = point2d_scale(perp, dbl_offset);
+
+                /* Offset from gapped center line */
+                point2d_t gp1a = point2d_add(gp1, offset);
+                point2d_t gp2a = point2d_add(gp2, offset);
+                point2d_t gp1b = point2d_sub(gp1, offset);
+                point2d_t gp2b = point2d_sub(gp2, offset);
+
                 if (use_colored_sticks) {
-                    /* Two colored sticks for double bond */
-                    point2d_t dir = point2d_sub(p2, p1);
-                    point2d_t perp = point2d_normalize(point2d_perp(dir));
-                    point2d_t offset = point2d_scale(perp, bond_width * 0.8);
-                    render_stick_bond(ctx->cr, mol, bond,
-                                      point2d_add(p1, offset), point2d_add(p2, offset),
-                                      bond_width * 0.7);
-                    render_stick_bond(ctx->cr, mol, bond,
-                                      point2d_sub(p1, offset), point2d_sub(p2, offset),
-                                      bond_width * 0.7);
+                    render_stick_bond_ex(ctx->cr, mol, bond, gp1a, gp2a, bond_width * 0.7, opts->line_cap);
+                    render_stick_bond_ex(ctx->cr, mol, bond, gp1b, gp2b, bond_width * 0.7, opts->line_cap);
                 } else {
-                    render_double_bond(ctx->cr, p1, p2, bond_width, bond_width * 3.0);
+                    rgb_color_t black = {0, 0, 0};
+                    set_color(ctx->cr, black);
+                    draw_line_ex(ctx->cr, gp1a, gp2a, bond_width, opts->line_cap);
+                    draw_line_ex(ctx->cr, gp1b, gp2b, bond_width, opts->line_cap);
                 }
             }
             else if (order == 3) {
+                point2d_t dir = point2d_sub(p2, p1);
+                point2d_t perp = point2d_normalize(point2d_perp(dir));
+                point2d_t offset = point2d_scale(perp, trpl_offset);
+
+                point2d_t gp1a = point2d_add(gp1, offset);
+                point2d_t gp2a = point2d_add(gp2, offset);
+                point2d_t gp1b = point2d_sub(gp1, offset);
+                point2d_t gp2b = point2d_sub(gp2, offset);
+
                 if (use_colored_sticks) {
-                    point2d_t dir = point2d_sub(p2, p1);
-                    point2d_t perp = point2d_normalize(point2d_perp(dir));
-                    point2d_t offset = point2d_scale(perp, bond_width * 1.0);
-                    render_stick_bond(ctx->cr, mol, bond, p1, p2, bond_width * 0.6);
-                    render_stick_bond(ctx->cr, mol, bond,
-                                      point2d_add(p1, offset), point2d_add(p2, offset),
-                                      bond_width * 0.6);
-                    render_stick_bond(ctx->cr, mol, bond,
-                                      point2d_sub(p1, offset), point2d_sub(p2, offset),
-                                      bond_width * 0.6);
+                    render_stick_bond_ex(ctx->cr, mol, bond, gp1, gp2, bond_width * 0.6, opts->line_cap);
+                    render_stick_bond_ex(ctx->cr, mol, bond, gp1a, gp2a, bond_width * 0.6, opts->line_cap);
+                    render_stick_bond_ex(ctx->cr, mol, bond, gp1b, gp2b, bond_width * 0.6, opts->line_cap);
                 } else {
-                    render_triple_bond(ctx->cr, p1, p2, bond_width, bond_width * 2.5);
+                    rgb_color_t black = {0, 0, 0};
+                    set_color(ctx->cr, black);
+                    draw_line_ex(ctx->cr, gp1, gp2, bond_width, opts->line_cap);
+                    draw_line_ex(ctx->cr, gp1a, gp2a, bond_width, opts->line_cap);
+                    draw_line_ex(ctx->cr, gp1b, gp2b, bond_width, opts->line_cap);
                 }
             }
             else {
                 if (use_colored_sticks) {
-                    render_stick_bond(ctx->cr, mol, bond, p1, p2, bond_width);
+                    render_stick_bond_ex(ctx->cr, mol, bond, gp1, gp2, bond_width, opts->line_cap);
                 } else {
-                    render_single_bond(ctx->cr, p1, p2, bond_width);
+                    rgb_color_t black = {0, 0, 0};
+                    set_color(ctx->cr, black);
+                    draw_line_ex(ctx->cr, gp1, gp2, bond_width, opts->line_cap);
                 }
             }
         }
@@ -804,14 +1128,15 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
             if (!mol->rings[r].aromatic) continue;
 
             point2d_t center = {0, 0};
-            for (int i = 0; i < mol->rings[r].size; i++) {
-                center = point2d_add(center, coords->coords_2d[mol->rings[r].atoms[i]]);
+            for (int ri = 0; ri < mol->rings[r].size; ri++) {
+                center = point2d_add(center, coords->coords_2d[mol->rings[r].atoms[ri]]);
             }
             center = point2d_scale(center, 1.0 / mol->rings[r].size);
 
             double radius = point2d_distance(center, coords->coords_2d[mol->rings[r].atoms[0]]) * 0.6;
 
             cairo_set_line_width(ctx->cr, bond_width);
+            cairo_set_line_cap(ctx->cr, get_cairo_line_cap(opts->line_cap));
             cairo_arc(ctx->cr, center.x, center.y, radius, 0, 2 * M_PI);
             rgb_color_t black = {0, 0, 0};
             set_color(ctx->cr, black);
@@ -819,10 +1144,10 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
         }
     }
 
-    /* Atom labels/spheres */
+    /* Atom labels/spheres - use extended version for modern style */
     for (int i = 0; i < mol->num_atoms; i++) {
-        render_atom_label(ctx->cr, &mol->atoms[i], coords->coords_2d[i],
-                         opts, ctx->background, base_scale);
+        render_atom_label_ex(ctx->cr, mol, i, coords->coords_2d[i],
+                            opts, ctx->background, base_scale);
     }
 
     return CCHEM_OK;
@@ -857,4 +1182,19 @@ cchem_status_t render_save_jpeg(render_context_t* ctx, const char* filename, int
     int ret = system(cmd);
 
     return (ret == 0) ? CCHEM_OK : CCHEM_ERROR_FILE_IO;
+}
+
+cchem_status_t render_save_svg(render_context_t* ctx, const char* filename) {
+    if (!ctx || !filename) return CCHEM_ERROR_INVALID_INPUT;
+
+    /* For SVG surfaces, the file is already written during rendering */
+    if (ctx->format == IMG_FORMAT_SVG) {
+        cairo_surface_flush(ctx->surface);
+        cairo_surface_finish(ctx->surface);
+        return CCHEM_OK;
+    }
+
+    /* For non-SVG contexts, we need to create a new SVG surface and re-render */
+    /* This is a fallback - ideally SVG should be created with create_ex */
+    return CCHEM_ERROR_INVALID_INPUT;
 }
