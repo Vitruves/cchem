@@ -294,18 +294,19 @@ int descriptors_compute_moments_all(const molecule_t* mol, descriptor_value_t* v
     bool heap_alloc = (n_heavy > MAX_ATOMS_STACK);
     double* prop_values;
     double* sorted;
+    size_t arr_size = (size_t)n_heavy * sizeof(double);
 
     if (heap_alloc) {
-        prop_values = (double*)malloc(n_heavy * sizeof(double));
-        sorted = (double*)malloc(n_heavy * sizeof(double));
+        prop_values = (double*)malloc(arr_size);
+        sorted = (double*)malloc(arr_size);
         if (!prop_values || !sorted) {
             free(prop_values);
             free(sorted);
             return -1;
         }
     } else {
-        prop_values = (double*)alloca(n_heavy * sizeof(double));
-        sorted = (double*)alloca(n_heavy * sizeof(double));
+        prop_values = (double*)alloca(arr_size);
+        sorted = (double*)alloca(arr_size);
     }
 
     int out_idx = 0;
@@ -337,7 +338,7 @@ int descriptors_compute_moments_all(const molecule_t* mol, descriptor_value_t* v
         double std = sqrt(var_sum / n_heavy);
 
         /* Create sorted copy for quantile-based stats */
-        memcpy(sorted, prop_values, n_heavy * sizeof(double));
+        memcpy(sorted, prop_values, arr_size);
         qsort(sorted, n_heavy, sizeof(double), compare_doubles);
 
         /* Compute statistics */
