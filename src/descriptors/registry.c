@@ -217,14 +217,12 @@ cchem_status_t descriptors_compute_batch(const molecule_t* mol,
 
     /* Group descriptors by category for optimized batch computation */
     const descriptor_def_t* descs[MAX_DESCRIPTORS];
-    int indices[MAX_DESCRIPTORS];
 
     for (int i = 0; i < num_descriptors; i++) {
         descs[i] = descriptor_get(names[i]);
         if (!descs[i]) {
             return CCHEM_ERROR_INVALID_INPUT;
         }
-        indices[i] = i;
     }
 
     /* Check if we have a batch compute function for the category */

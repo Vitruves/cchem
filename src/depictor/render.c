@@ -101,14 +101,6 @@ static cairo_line_cap_t get_cairo_line_cap(line_cap_t cap) {
     }
 }
 
-static void draw_line(cairo_t* cr, point2d_t p1, point2d_t p2, double width) {
-    cairo_set_line_width(cr, width);
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-    cairo_move_to(cr, p1.x, p1.y);
-    cairo_line_to(cr, p2.x, p2.y);
-    cairo_stroke(cr);
-}
-
 static void draw_line_ex(cairo_t* cr, point2d_t p1, point2d_t p2, double width, line_cap_t cap) {
     cairo_set_line_width(cr, width);
     cairo_set_line_cap(cr, get_cairo_line_cap(cap));
@@ -166,38 +158,6 @@ static void draw_text(cairo_t* cr, const char* text, point2d_t pos, double font_
 }
 
 /* ============== Bond Rendering ============== */
-
-static void render_single_bond(cairo_t* cr, point2d_t p1, point2d_t p2, double width) {
-    rgb_color_t black = {0, 0, 0};
-    set_color(cr, black);
-    draw_line(cr, p1, p2, width);
-}
-
-static void render_double_bond(cairo_t* cr, point2d_t p1, point2d_t p2, double width, double spacing) {
-    rgb_color_t black = {0, 0, 0};
-    set_color(cr, black);
-
-    point2d_t dir = point2d_sub(p2, p1);
-    point2d_t perp = point2d_normalize(point2d_perp(dir));
-    point2d_t offset = point2d_scale(perp, spacing / 2.0);
-
-    draw_line(cr, point2d_add(p1, offset), point2d_add(p2, offset), width);
-    draw_line(cr, point2d_sub(p1, offset), point2d_sub(p2, offset), width);
-}
-
-static void render_triple_bond(cairo_t* cr, point2d_t p1, point2d_t p2, double width, double spacing) {
-    rgb_color_t black = {0, 0, 0};
-    set_color(cr, black);
-
-    draw_line(cr, p1, p2, width);
-
-    point2d_t dir = point2d_sub(p2, p1);
-    point2d_t perp = point2d_normalize(point2d_perp(dir));
-    point2d_t offset = point2d_scale(perp, spacing);
-
-    draw_line(cr, point2d_add(p1, offset), point2d_add(p2, offset), width);
-    draw_line(cr, point2d_sub(p1, offset), point2d_sub(p2, offset), width);
-}
 
 static void render_wedge_bond(cairo_t* cr, point2d_t p1, point2d_t p2, double width) {
     rgb_color_t black = {0, 0, 0};
@@ -549,11 +509,6 @@ static void render_stick_bond_ex(cairo_t* cr, const molecule_t* mol, const bond_
     cairo_move_to(cr, mid.x, mid.y);
     cairo_line_to(cr, p2.x, p2.y);
     cairo_stroke(cr);
-}
-
-static void render_stick_bond(cairo_t* cr, const molecule_t* mol, const bond_t* bond,
-                               point2d_t p1, point2d_t p2, double width) {
-    render_stick_bond_ex(cr, mol, bond, p1, p2, width, LINE_CAP_ROUND);
 }
 
 /* ============== Surface Rendering (Smooth molecular surface) ============== */
@@ -915,73 +870,6 @@ static bool needs_bond_gap(const molecule_t* mol, int atom_idx, const depictor_o
     return false;
 }
 
-/* Render bond with modern style (gaps at labeled atoms) */
-static void render_bond_modern(cairo_t* cr, const molecule_t* mol, const bond_t* bond,
-                                point2d_t p1, point2d_t p2, int order, double width,
-                                const depictor_options_t* opts) {
-    int i = bond->atom1;
-    int j = bond->atom2;
-
-    bool gap1 = needs_bond_gap(mol, i, opts);
-    bool gap2 = needs_bond_gap(mol, j, opts);
-
-    rgb_color_t black = {0, 0, 0};
-    set_color(cr, black);
-
-    double dbl_offset = opts->double_bond_offset * opts->bond_length;
-    double trpl_offset = opts->triple_bond_offset * opts->bond_length;
-
-    if (order == 1) {
-        point2d_t gp1, gp2;
-        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
-        draw_line_ex(cr, gp1, gp2, width, opts->line_cap);
-    }
-    else if (order == 2) {
-        /* For double bonds: draw both lines from atom centers, with gaps applied
-         * to the conceptual center line position, then offset */
-        point2d_t dir = point2d_sub(p2, p1);
-        point2d_t perp = point2d_normalize(point2d_perp(dir));
-        point2d_t offset = point2d_scale(perp, dbl_offset);
-
-        /* Calculate gap on the center line */
-        point2d_t gp1, gp2;
-        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
-
-        /* Then offset both lines from the gapped center */
-        point2d_t gp1a = point2d_add(gp1, offset);
-        point2d_t gp2a = point2d_add(gp2, offset);
-        point2d_t gp1b = point2d_sub(gp1, offset);
-        point2d_t gp2b = point2d_sub(gp2, offset);
-
-        draw_line_ex(cr, gp1a, gp2a, width, opts->line_cap);
-        draw_line_ex(cr, gp1b, gp2b, width, opts->line_cap);
-    }
-    else if (order == 3) {
-        point2d_t dir = point2d_sub(p2, p1);
-        point2d_t perp = point2d_normalize(point2d_perp(dir));
-        point2d_t offset = point2d_scale(perp, trpl_offset);
-
-        /* Calculate gap on the center line */
-        point2d_t gp1, gp2;
-        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
-
-        /* Center line and offset lines */
-        point2d_t gp1a = point2d_add(gp1, offset);
-        point2d_t gp2a = point2d_add(gp2, offset);
-        point2d_t gp1b = point2d_sub(gp1, offset);
-        point2d_t gp2b = point2d_sub(gp2, offset);
-
-        draw_line_ex(cr, gp1, gp2, width, opts->line_cap);
-        draw_line_ex(cr, gp1a, gp2a, width, opts->line_cap);
-        draw_line_ex(cr, gp1b, gp2b, width, opts->line_cap);
-    }
-    else {
-        point2d_t gp1, gp2;
-        calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
-        draw_line_ex(cr, gp1, gp2, width, opts->line_cap);
-    }
-}
-
 cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
                                const mol_coords_t* coords, const depictor_options_t* opts) {
     if (!ctx || !mol || !coords || !opts) return CCHEM_ERROR_INVALID_INPUT;
@@ -1042,19 +930,15 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
 
             /* Check stereochemistry */
             if (bond->stereo_type == BOND_UP) {
-                point2d_t stereo_p1 = p1, stereo_p2 = p2;
                 point2d_t stereo_gp1 = gp1, stereo_gp2 = gp2;
                 if (bond->stereo_atom == j) {
-                    stereo_p1 = p2; stereo_p2 = p1;
                     stereo_gp1 = gp2; stereo_gp2 = gp1;
                 }
                 render_wedge_bond(ctx->cr, stereo_gp1, stereo_gp2, bond_width);
             }
             else if (bond->stereo_type == BOND_DOWN) {
-                point2d_t stereo_p1 = p1, stereo_p2 = p2;
                 point2d_t stereo_gp1 = gp1, stereo_gp2 = gp2;
                 if (bond->stereo_atom == j) {
-                    stereo_p1 = p2; stereo_p2 = p1;
                     stereo_gp1 = gp2; stereo_gp2 = gp1;
                 }
                 render_dash_bond(ctx->cr, stereo_gp1, stereo_gp2, bond_width);

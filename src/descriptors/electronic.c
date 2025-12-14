@@ -186,13 +186,11 @@ static void compute_gasteiger_charges(const molecule_t* mol, double* charges) {
     }
 
     gm_params_t params[MAX_GM_ATOMS];
-    double chi[MAX_GM_ATOMS];
 
     /* Initialize */
     for (int i = 0; i < mol->num_atoms; i++) {
         charges[i] = 0.0;
         params[i] = get_gm_params(mol->atoms[i].element);
-        chi[i] = params[i].a;  /* Initial electronegativity at q=0 */
     }
 
     /* PEOE iterations */

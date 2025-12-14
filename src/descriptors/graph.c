@@ -24,6 +24,17 @@
 #include "cchem/canonicalizer/atom.h"
 #include "cchem/canonicalizer/bond.h"
 
+/* Thread-safe igraph initialization.
+ * igraph's default error handler uses a non-thread-safe "finally stack".
+ * We disable it and rely on return value checking instead. */
+static void ensure_igraph_thread_safe(void) {
+    static _Atomic int initialized = 0;
+    if (!initialized) {
+        igraph_set_error_handler(igraph_error_handler_ignore);
+        initialized = 1;
+    }
+}
+
 /* igraph API differences between versions:
  * - igraph 0.10.x: weights parameter at END of function args
  * - igraph 1.0.0+: weights parameter near BEGINNING, plus normalized param
@@ -183,6 +194,9 @@ static void free_igraph(igraph_t* g, int* atom_map) {
 
 static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
     memset(s, 0, sizeof(graph_stats_t));
+
+    /* Ensure igraph error handler is disabled for thread safety */
+    ensure_igraph_thread_safe();
 
     int* atom_map = NULL;
     int n_heavy = 0;

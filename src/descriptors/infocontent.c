@@ -186,7 +186,7 @@ int descriptors_compute_ic_all(const molecule_t* mol, descriptor_value_t* values
     double IC[6];
     IC[0] = IC0;
     for (int order = 1; order <= 5; order++) {
-        int n_classes = compute_atom_classes(mol, classes, order);
+        (void)compute_atom_classes(mol, classes, order);
         int n_unique = count_class_distribution(classes, n, counts, 128);
         IC[order] = shannon_entropy(counts, n_unique, n);
     }

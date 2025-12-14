@@ -29,15 +29,6 @@
  * Helper Functions
  * ============================================================================ */
 
-/* Count heavy (non-H) neighbors */
-static int heavy_neighbors(const molecule_t* mol, const atom_t* atom) {
-    int count = 0;
-    for (int i = 0; i < atom->num_neighbors; i++) {
-        if (mol->atoms[atom->neighbors[i]].element != ELEM_H) count++;
-    }
-    return count;
-}
-
 /* Get total H count (implicit + explicit) */
 static int total_h(const molecule_t* mol, const atom_t* atom) {
     int h = atom->implicit_h_count;
