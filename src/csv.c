@@ -873,10 +873,10 @@ csv_bulk_writer_t* csv_bulk_writer_create(int num_rows, size_t avg_line_size) {
     bulk->delimiter = ',';
     bulk->quote_char = '"';
 
-    /* Pre-allocate each line buffer */
+    /* Pre-allocate each line buffer - use calloc to zero-initialize */
     size_t initial_cap = (avg_line_size > 0) ? avg_line_size : 1024;
     for (int i = 0; i < num_rows; i++) {
-        bulk->lines[i].data = (char*)malloc(initial_cap);
+        bulk->lines[i].data = (char*)calloc(initial_cap, 1);
         if (!bulk->lines[i].data) {
             /* Cleanup on failure */
             for (int j = 0; j < i; j++) {
@@ -935,6 +935,8 @@ csv_status_t csv_bulk_format_row(csv_bulk_writer_t* bulk, int row_idx,
         size_t new_cap = needed * 2;
         char* new_data = (char*)realloc(line->data, new_cap);
         if (!new_data) return CSV_ERROR_MEMORY;
+        /* Zero-initialize the new space */
+        memset(new_data + line->capacity, 0, new_cap - line->capacity);
         line->data = new_data;
         line->capacity = new_cap;
     }

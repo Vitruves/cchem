@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/vitruves/Developer/GitHub/cchem/build_asan/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

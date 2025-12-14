@@ -669,10 +669,13 @@ static void* desc_batch_worker(void* arg) {
     static __thread const descriptor_def_t* cached_defs[MAX_DESCRIPTORS];
     static __thread int cached_num_defs = 0;
     static __thread int cached_total = 0;
+    static __thread bool tl_initialized = false;
 
-    if (cached_total == 0) {
+    if (!tl_initialized) {
+        memset(cached_defs, 0, sizeof(cached_defs));
         cached_total = descriptor_count();
         cached_num_defs = descriptor_get_all(cached_defs, MAX_DESCRIPTORS);
+        tl_initialized = true;
     }
 
     /* Initialize thread-local molecule on first use */
@@ -734,8 +737,9 @@ static void* desc_batch_worker(void* arg) {
 
     if (compute_all) {
         /* Use cached defs (already loaded in thread-local storage) */
-        /* Batch computation */
+        /* Batch computation - zero-initialize to avoid valgrind warnings */
         descriptor_value_t all_values[MAX_DESCRIPTORS];
+        memset(all_values, 0, sizeof(all_values));
         int num_computed = descriptors_compute_all(mol, NULL, all_values, MAX_DESCRIPTORS);
 
         /* Format with correct types - fast formatting for both ints and doubles */
@@ -755,7 +759,7 @@ static void* desc_batch_worker(void* arg) {
             const descriptor_def_t* def = descriptor_get(task->desc_names[i]);
             char* dest = result_value_ptr(result, i);
             if (def) {
-                descriptor_value_t value;
+                descriptor_value_t value = {0};  /* Zero-initialize */
                 if (def->compute(mol, &value) == CCHEM_OK) {
                     if (def->value_type == DESC_VALUE_INT) {
                         fast_i64toa(value.i, dest, DESC_VALUE_WIDTH);
@@ -916,7 +920,7 @@ static int cmd_compute(int argc, char* argv[]) {
             const descriptor_def_t* def = descriptor_get(desc_names[i]);
             if (!def) continue;
 
-            descriptor_value_t value;
+            descriptor_value_t value = {0};  /* Zero-initialize */
             cchem_status_t status = def->compute(mol, &value);
 
             if (status == CCHEM_OK) {
