@@ -156,9 +156,10 @@ static void initialize_z_coordinates(mol_coords_t* coords, const molecule_t* mol
 
 double coords3d_minimize(mol_coords_t* coords, const molecule_t* mol,
                          const coords3d_options_t* options) {
-    if (!coords || !mol || !coords->has_3d || mol->num_atoms == 0) return 0.0;
+    if (!coords || !mol || !coords->has_3d || mol->num_atoms <= 0) return 0.0;
 
     int n = mol->num_atoms;
+    if (n <= 0) return 0.0;  /* Help GCC prove n is positive */
     int max_iter = options ? options->max_iterations : 500;
     double tol = options ? options->gradient_tolerance : 1e-3;
 

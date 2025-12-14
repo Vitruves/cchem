@@ -600,7 +600,6 @@ cchem_status_t smiles_writer_write(smiles_writer_t* writer) {
     /* Reset state */
     writer->buffer_pos = 0;
     writer->buffer[0] = '\0';
-    memset(writer->visited, 0, (size_t)writer->mol->num_atoms * sizeof(bool));
     writer->num_pending = 0;
 
     /* Reset ring closure tracking */
@@ -613,34 +612,37 @@ cchem_status_t smiles_writer_write(smiles_writer_t* writer) {
         writer->ring_num_stack[writer->ring_num_stack_top++] = 100 - i;
     }
 
-    if (writer->mol->num_atoms == 0) {
+    int num_atoms = writer->mol->num_atoms;
+    if (num_atoms <= 0) {
         return CCHEM_OK;
     }
+
+    memset(writer->visited, 0, (size_t)num_atoms * sizeof(bool));
 
     /* Determine traversal order */
     const int* order = writer->atom_order;
     int* default_order = NULL;
 
     if (!order) {
-        default_order = (int*)calloc(writer->mol->num_atoms, sizeof(int));
+        default_order = (int*)calloc(num_atoms, sizeof(int));
         if (!default_order) return CCHEM_ERROR_MEMORY;
-        for (int i = 0; i < writer->mol->num_atoms; i++) {
+        for (int i = 0; i < num_atoms; i++) {
             default_order[i] = i;
         }
         order = default_order;
     }
 
     /* Allocate DFS order tracking array */
-    int* dfs_order = (int*)calloc(writer->mol->num_atoms, sizeof(int));
+    int* dfs_order = (int*)calloc(num_atoms, sizeof(int));
     if (!dfs_order) {
         if (default_order) free(default_order);
         return CCHEM_ERROR_MEMORY;
     }
-    memset(dfs_order, -1, (size_t)writer->mol->num_atoms * sizeof(int));
+    memset(dfs_order, -1, (size_t)num_atoms * sizeof(int));
 
     /* FIRST PASS: Identify all ring closures */
     int order_idx = 0;
-    for (int i = 0; i < writer->mol->num_atoms; i++) {
+    for (int i = 0; i < num_atoms; i++) {
         int start_atom = order[i];
         if (writer->visited[start_atom]) continue;
         identify_rings_dfs(writer, start_atom, -1, dfs_order, &order_idx);
@@ -649,12 +651,12 @@ cchem_status_t smiles_writer_write(smiles_writer_t* writer) {
     free(dfs_order);
 
     /* Reset visited for second pass */
-    memset(writer->visited, 0, writer->mol->num_atoms * sizeof(bool));
+    memset(writer->visited, 0, (size_t)num_atoms * sizeof(bool));
 
     /* SECOND PASS: Write SMILES with ring closures */
     bool first_fragment = true;
 
-    for (int i = 0; i < writer->mol->num_atoms; i++) {
+    for (int i = 0; i < num_atoms; i++) {
         int start_atom = order[i];
 
         if (writer->visited[start_atom]) continue;
