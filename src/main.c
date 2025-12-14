@@ -662,7 +662,11 @@ static inline void fast_dtoa(double val, char* buf, int buf_size) {
 static void* desc_batch_worker(void* arg) {
     desc_task_arg_t* task = (desc_task_arg_t*)arg;
 
-    /* Thread-local molecule pool to avoid malloc/free per molecule */
+    /* Thread-local molecule pool to avoid malloc/free per molecule.
+     * Note: This causes a small bounded memory leak (~360 bytes per thread)
+     * when threads exit, since __thread doesn't have destructors in C.
+     * For CLI usage this is acceptable; for long-running servers, consider
+     * using pthread_key_create with a destructor (slower but leak-free). */
     static __thread molecule_t* tl_mol = NULL;
 
     /* Use thread-local cache for descriptor defs to avoid repeated lookups */
@@ -680,7 +684,7 @@ static void* desc_batch_worker(void* arg) {
 
     /* Initialize thread-local molecule on first use */
     if (!tl_mol) {
-        tl_mol = molecule_create_with_capacity(256, 256);  /* Pre-size for typical molecules */
+        tl_mol = molecule_create_with_capacity(256, 256);
     }
 
     desc_task_result_t* result = (desc_task_result_t*)malloc(sizeof(desc_task_result_t));
@@ -747,19 +751,36 @@ static void* desc_batch_worker(void* arg) {
         if (n > cached_num_defs) n = cached_num_defs;
         for (int i = 0; i < n; i++) {
             char* dest = result_value_ptr(result, i);
+            /* Add NULL check for safety */
+            if (cached_defs[i] == NULL) {
+                dest[0] = '0';
+                dest[1] = '\0';
+                continue;
+            }
             if (cached_defs[i]->value_type == DESC_VALUE_INT) {
                 fast_i64toa(all_values[i].i, dest, DESC_VALUE_WIDTH);
             } else {
                 fast_dtoa(all_values[i].d, dest, DESC_VALUE_WIDTH);
             }
         }
+        /* Ensure any remaining slots are properly null-terminated (already zeroed by memset) */
+        for (int i = n; i < task->num_descs; i++) {
+            char* dest = result_value_ptr(result, i);
+            dest[0] = '0';
+            dest[1] = '\0';
+        }
     } else {
         /* Individual computation for subset of descriptors */
         for (int i = 0; i < task->num_descs; i++) {
             const descriptor_def_t* def = descriptor_get(task->desc_names[i]);
             char* dest = result_value_ptr(result, i);
+            /* Always initialize to "0" as fallback */
+            dest[0] = '0';
+            dest[1] = '\0';
             if (def) {
-                descriptor_value_t value = {0};  /* Zero-initialize */
+                descriptor_value_t value;
+                /* Zero-initialize entire union to avoid valgrind warnings */
+                memset(&value, 0, sizeof(value));
                 if (def->compute(mol, &value) == CCHEM_OK) {
                     if (def->value_type == DESC_VALUE_INT) {
                         fast_i64toa(value.i, dest, DESC_VALUE_WIDTH);
@@ -920,7 +941,8 @@ static int cmd_compute(int argc, char* argv[]) {
             const descriptor_def_t* def = descriptor_get(desc_names[i]);
             if (!def) continue;
 
-            descriptor_value_t value = {0};  /* Zero-initialize */
+            descriptor_value_t value;
+            memset(&value, 0, sizeof(value));  /* Zero-initialize entire union */
             cchem_status_t status = def->compute(mol, &value);
 
             if (status == CCHEM_OK) {

@@ -579,10 +579,10 @@ static void extract_features(const molecule_t* mol, double* features) {
 static inline double relu(double x) { return x > 0 ? x : 0; }
 
 static double nn_predict(const double* features) {
-    double h1[NN_HIDDEN1], h2[NN_HIDDEN2];
+    double h1[NN_HIDDEN1] = {0}, h2[NN_HIDDEN2] = {0};
 
     /* Normalize features */
-    double norm[NN_INPUT];
+    double norm[NN_INPUT] = {0};
     for (int i = 0; i < NN_INPUT; i++) {
         norm[i] = (features[i] - FEAT_MEAN[i]) / FEAT_STD[i];
         if (isnan(norm[i]) || isinf(norm[i])) norm[i] = 0.0;
@@ -620,7 +620,7 @@ static double nn_predict(const double* features) {
  * ============================================================================ */
 
 static cchem_status_t compute_cclogd74(const molecule_t* mol, descriptor_value_t* value) {
-    double features[NN_INPUT];
+    double features[NN_INPUT] = {0};
     extract_features(mol, features);
     value->d = nn_predict(features);
     return CCHEM_OK;
