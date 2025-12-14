@@ -13,10 +13,11 @@
 #include "cchem/descriptors.h"
 #include "cchem/csv.h"
 #include "cchem/progress.h"
-#include "cchem/parallel.h"
+#include "cchem/threading.h"
+#include "cchem/memory.h"
 #include "cchem/depictor/depictor.h"
-#include "cchem/arena.h"
 #include "cchem/splitter.h"
+#include <stdatomic.h>
 
 #define VERSION "1.0.0"
 
@@ -398,14 +399,6 @@ static int cmd_validate(int argc, char* argv[]) {
     }
 }
 
-/* Descriptor batch processing types */
-typedef struct {
-    int row_idx;
-    const char* smiles;  /* Pointer to source data (not owned) */
-    char** desc_names;
-    int num_descs;
-    bool skip_canonicalization;
-} desc_task_arg_t;
 
 /* SMILES column data loaded via mmap (more efficient than csv_document_read) */
 typedef struct {
@@ -539,26 +532,6 @@ static smiles_data_t* smiles_data_load(const char* filename, const char* smiles_
 /* Fixed-width field for pre-allocated buffer (24 bytes covers most descriptor values) */
 #define DESC_VALUE_WIDTH 24
 
-typedef struct {
-    int row_idx;
-    char* buffer;         /* Single pre-allocated buffer: num_values * DESC_VALUE_WIDTH */
-    int num_values;
-    bool success;
-} desc_task_result_t;
-
-/* Task argument for parallel CSV row formatting */
-typedef struct {
-    int row_idx;
-    csv_bulk_writer_t* bulk;       /* Shared bulk writer (thread-safe per-row writes) */
-    const char** fields;           /* Array of field pointers for this row */
-    int num_fields;
-} csv_format_task_t;
-
-/* Get pointer to i-th value in result buffer */
-static inline char* result_value_ptr(desc_task_result_t* r, int i) {
-    return r->buffer + (i * DESC_VALUE_WIDTH);
-}
-
 /* Fast integer to string - avoids snprintf overhead for integers */
 static inline void fast_i64toa(int64_t val, char* buf, int buf_size) {
     if (buf_size < 2) return;
@@ -658,150 +631,479 @@ static inline void fast_dtoa(double val, char* buf, int buf_size) {
     buf[pos] = '\0';
 }
 
-/* Worker function for descriptor computation */
-static void* desc_batch_worker(void* arg) {
-    desc_task_arg_t* task = (desc_task_arg_t*)arg;
 
-    /* Thread-local molecule pool to avoid malloc/free per molecule.
-     * Note: This causes a small bounded memory leak (~360 bytes per thread)
-     * when threads exit, since __thread doesn't have destructors in C.
-     * For CLI usage this is acceptable; for long-running servers, consider
-     * using pthread_key_create with a destructor (slower but leak-free). */
-    static __thread molecule_t* tl_mol = NULL;
+/* ============================================================================
+ * Pipeline Streaming Data Structures
+ * ============================================================================ */
 
-    /* Use thread-local cache for descriptor defs to avoid repeated lookups */
-    static __thread const descriptor_def_t* cached_defs[MAX_DESCRIPTORS];
-    static __thread int cached_num_defs = 0;
-    static __thread int cached_total = 0;
-    static __thread bool tl_initialized = false;
+/* Input work item - from reader to workers */
+typedef struct {
+    int row_idx;
+    char* smiles;                 /* Owned, freed after processing */
+    char** original_fields;       /* Owned array of owned strings */
+    int num_original_fields;
+} work_item_t;
 
-    if (!tl_initialized) {
-        memset(cached_defs, 0, sizeof(cached_defs));
-        cached_total = descriptor_count();
-        cached_num_defs = descriptor_get_all(cached_defs, MAX_DESCRIPTORS);
-        tl_initialized = true;
+/* Output work item - from workers to writer */
+typedef struct {
+    int row_idx;                  /* For potential ordering */
+    char** output_fields;         /* Ready-to-write field array (owned) */
+    int num_fields;
+    bool success;
+} result_item_t;
+
+/* Pipeline context */
+typedef struct {
+    /* Input */
+    csv_mmap_reader_t* reader;
+    int smiles_col_idx;
+    int num_input_fields;
+    char** header_fields;         /* Original header field names */
+
+    /* Output */
+    FILE* output_file;
+    char** desc_names;
+    int num_descs;
+
+    /* Queues */
+    bounded_queue_t* input_queue;
+    bounded_queue_t* output_queue;
+
+    /* Threads */
+    pthread_t reader_thread;
+    pthread_t writer_thread;
+    pthread_t* worker_threads;
+    int num_workers;
+
+    /* Progress */
+    atomic_size_t rows_read;
+    atomic_size_t rows_processed;
+    atomic_size_t rows_written;
+    size_t total_rows;
+
+    /* Control */
+    bool skip_canon;
+    char delimiter;
+} pipeline_ctx_t;
+
+/* Free a work item */
+static void work_item_free(work_item_t* item) {
+    if (!item) return;
+    free(item->smiles);
+    if (item->original_fields) {
+        for (int i = 0; i < item->num_original_fields; i++) {
+            free(item->original_fields[i]);
+        }
+        free(item->original_fields);
+    }
+    free(item);
+}
+
+/* Free a result item */
+static void result_item_free(result_item_t* result) {
+    if (!result) return;
+    if (result->output_fields) {
+        for (int i = 0; i < result->num_fields; i++) {
+            free(result->output_fields[i]);
+        }
+        free(result->output_fields);
+    }
+    free(result);
+}
+
+/* Reader thread - reads CSV rows and pushes to input queue */
+static void* pipeline_reader_thread(void* arg) {
+    pipeline_ctx_t* ctx = (pipeline_ctx_t*)arg;
+
+    size_t line_len;
+    const char* line;
+    int row_idx = 0;
+    const char* fields[256];
+
+    while ((line = csv_mmap_reader_next_line(ctx->reader, &line_len))) {
+        int nfields = csv_mmap_parse_line(line, line_len, ctx->delimiter, fields, 256);
+
+        /* Create work item */
+        work_item_t* item = (work_item_t*)malloc(sizeof(work_item_t));
+        if (!item) continue;
+
+        item->row_idx = row_idx++;
+        item->num_original_fields = nfields;
+
+        /* Copy SMILES string */
+        if (ctx->smiles_col_idx < nfields && fields[ctx->smiles_col_idx]) {
+            item->smiles = strdup(fields[ctx->smiles_col_idx]);
+        } else {
+            item->smiles = strdup("");
+        }
+
+        /* Copy all original fields */
+        item->original_fields = (char**)calloc(nfields, sizeof(char*));
+        if (item->original_fields) {
+            for (int i = 0; i < nfields; i++) {
+                item->original_fields[i] = fields[i] ? strdup(fields[i]) : strdup("");
+            }
+        }
+
+        /* Push to input queue (blocks if full) */
+        if (!queue_push(ctx->input_queue, item)) {
+            work_item_free(item);
+            break;
+        }
+        atomic_fetch_add(&ctx->rows_read, 1);
     }
 
-    /* Initialize thread-local molecule on first use */
-    if (!tl_mol) {
-        tl_mol = molecule_create_with_capacity(256, 256);
-    }
+    /* Signal EOF */
+    queue_close(ctx->input_queue);
+    return NULL;
+}
 
-    desc_task_result_t* result = (desc_task_result_t*)malloc(sizeof(desc_task_result_t));
-    if (!result) return NULL;
+/* Worker thread - processes SMILES and computes descriptors */
+static void* pipeline_worker_thread(void* arg) {
+    pipeline_ctx_t* ctx = (pipeline_ctx_t*)arg;
 
-    result->row_idx = task->row_idx;
-    result->num_values = task->num_descs;
+    /* Thread-local molecule for reuse */
+    molecule_t* tl_mol = molecule_create_with_capacity(256, 256);
 
-    /* Single allocation for all values (no memset - values will be written by formatters) */
-    result->buffer = (char*)malloc(task->num_descs * DESC_VALUE_WIDTH);
-    if (!result->buffer) {
-        free(result);
-        return NULL;
-    }
-
-    if (!task->smiles || task->smiles[0] == '\0') {
-        result->success = false;
-        return result;
-    }
+    /* Cache descriptor definitions */
+    const descriptor_def_t* cached_defs[MAX_DESCRIPTORS];
+    int cached_num_defs = descriptor_get_all(cached_defs, MAX_DESCRIPTORS);
+    int cached_total = descriptor_count();
+    bool compute_all = (ctx->num_descs >= cached_total);
 
     char error_buf[256];
-    molecule_t* mol = NULL;
-    cchem_status_t status;
+    work_item_t* item;
 
-    if (task->skip_canonicalization) {
-        /* Parse directly without canonicalization - reuse thread-local molecule */
-        status = smiles_to_molecule_reuse(tl_mol, task->smiles, error_buf, sizeof(error_buf));
-        mol = (status == CCHEM_OK) ? tl_mol : NULL;
-    } else {
-        /* Canonicalize SMILES first */
-        char* canonical = smiles_canonicalize(task->smiles, NULL, error_buf, sizeof(error_buf));
-        if (!canonical) {
-            result->success = false;
-            return result;
+    while ((item = (work_item_t*)queue_pop(ctx->input_queue)) != NULL) {
+        /* Create result with all fields */
+        int out_num_fields = item->num_original_fields + ctx->num_descs;
+        result_item_t* result = (result_item_t*)malloc(sizeof(result_item_t));
+        if (!result) {
+            work_item_free(item);
+            continue;
         }
 
-        /* Parse molecule - reuse thread-local molecule */
-        status = smiles_to_molecule_reuse(tl_mol, canonical, error_buf, sizeof(error_buf));
-        mol = (status == CCHEM_OK) ? tl_mol : NULL;
-        free(canonical);
-    }
-
-    if (!mol) {
+        result->row_idx = item->row_idx;
+        result->num_fields = out_num_fields;
+        result->output_fields = (char**)calloc(out_num_fields, sizeof(char*));
         result->success = false;
-        return result;
-    }
 
-    /* Compute descriptors - use batch for all, individual for subset */
-    result->success = true;
+        if (!result->output_fields) {
+            result_item_free(result);
+            work_item_free(item);
+            continue;
+        }
 
-    /* Check if computing all descriptors (use optimized batch path) */
-    bool compute_all = (task->num_descs >= cached_total);
+        /* Copy original fields */
+        for (int i = 0; i < item->num_original_fields; i++) {
+            result->output_fields[i] = item->original_fields[i] ?
+                                       strdup(item->original_fields[i]) : strdup("");
+        }
 
-    if (compute_all) {
-        /* Use cached defs (already loaded in thread-local storage) */
-        /* Batch computation - no memset needed, all slots will be written */
-        descriptor_value_t all_values[MAX_DESCRIPTORS];
-        int num_computed = descriptors_compute_all(mol, NULL, all_values, MAX_DESCRIPTORS);
+        /* Compute descriptors */
+        molecule_t* mol = NULL;
+        cchem_status_t status;
 
-        /* Format with correct types - fast formatting for both ints and doubles */
-        int n = (task->num_descs < num_computed) ? task->num_descs : num_computed;
-        if (n > cached_num_defs) n = cached_num_defs;
-        for (int i = 0; i < n; i++) {
-            char* dest = result_value_ptr(result, i);
-            /* Add NULL check for safety */
-            if (cached_defs[i] == NULL) {
-                dest[0] = '0';
-                dest[1] = '\0';
-                continue;
-            }
-            if (cached_defs[i]->value_type == DESC_VALUE_INT) {
-                fast_i64toa(all_values[i].i, dest, DESC_VALUE_WIDTH);
+        if (item->smiles && item->smiles[0] != '\0') {
+            if (ctx->skip_canon) {
+                status = smiles_to_molecule_reuse(tl_mol, item->smiles, error_buf, sizeof(error_buf));
+                mol = (status == CCHEM_OK) ? tl_mol : NULL;
             } else {
-                fast_dtoa(all_values[i].d, dest, DESC_VALUE_WIDTH);
-            }
-        }
-        /* Ensure any remaining slots are properly null-terminated (already zeroed by memset) */
-        for (int i = n; i < task->num_descs; i++) {
-            char* dest = result_value_ptr(result, i);
-            dest[0] = '0';
-            dest[1] = '\0';
-        }
-    } else {
-        /* Individual computation for subset of descriptors */
-        for (int i = 0; i < task->num_descs; i++) {
-            const descriptor_def_t* def = descriptor_get(task->desc_names[i]);
-            char* dest = result_value_ptr(result, i);
-            /* Always initialize to "0" as fallback */
-            dest[0] = '0';
-            dest[1] = '\0';
-            if (def) {
-                descriptor_value_t value;
-                /* Zero-initialize entire union to avoid valgrind warnings */
-                memset(&value, 0, sizeof(value));
-                if (def->compute(mol, &value) == CCHEM_OK) {
-                    if (def->value_type == DESC_VALUE_INT) {
-                        fast_i64toa(value.i, dest, DESC_VALUE_WIDTH);
-                    } else {
-                        fast_dtoa(value.d, dest, DESC_VALUE_WIDTH);
-                    }
+                char* canonical = smiles_canonicalize(item->smiles, NULL, error_buf, sizeof(error_buf));
+                if (canonical) {
+                    status = smiles_to_molecule_reuse(tl_mol, canonical, error_buf, sizeof(error_buf));
+                    mol = (status == CCHEM_OK) ? tl_mol : NULL;
+                    free(canonical);
                 }
             }
         }
+
+        if (mol) {
+            result->success = true;
+
+            if (compute_all) {
+                /* Batch computation */
+                descriptor_value_t all_values[MAX_DESCRIPTORS];
+                int num_computed = descriptors_compute_all(mol, NULL, all_values, MAX_DESCRIPTORS);
+
+                int n = (ctx->num_descs < num_computed) ? ctx->num_descs : num_computed;
+                if (n > cached_num_defs) n = cached_num_defs;
+
+                for (int i = 0; i < n; i++) {
+                    char val_buf[DESC_VALUE_WIDTH];
+                    if (cached_defs[i] == NULL) {
+                        strcpy(val_buf, "0");
+                    } else if (cached_defs[i]->value_type == DESC_VALUE_INT) {
+                        fast_i64toa(all_values[i].i, val_buf, DESC_VALUE_WIDTH);
+                    } else {
+                        fast_dtoa(all_values[i].d, val_buf, DESC_VALUE_WIDTH);
+                    }
+                    result->output_fields[item->num_original_fields + i] = strdup(val_buf);
+                }
+                /* Fill remaining with "0" */
+                for (int i = n; i < ctx->num_descs; i++) {
+                    result->output_fields[item->num_original_fields + i] = strdup("0");
+                }
+            } else {
+                /* Individual computation for subset */
+                for (int i = 0; i < ctx->num_descs; i++) {
+                    char val_buf[DESC_VALUE_WIDTH];
+                    strcpy(val_buf, "0");
+
+                    const descriptor_def_t* def = descriptor_get(ctx->desc_names[i]);
+                    if (def) {
+                        descriptor_value_t value;
+                        memset(&value, 0, sizeof(value));
+                        if (def->compute(mol, &value) == CCHEM_OK) {
+                            if (def->value_type == DESC_VALUE_INT) {
+                                fast_i64toa(value.i, val_buf, DESC_VALUE_WIDTH);
+                            } else {
+                                fast_dtoa(value.d, val_buf, DESC_VALUE_WIDTH);
+                            }
+                        }
+                    }
+                    result->output_fields[item->num_original_fields + i] = strdup(val_buf);
+                }
+            }
+        } else {
+            /* Failed to parse - fill with "0" */
+            for (int i = 0; i < ctx->num_descs; i++) {
+                result->output_fields[item->num_original_fields + i] = strdup("0");
+            }
+        }
+
+        atomic_fetch_add(&ctx->rows_processed, 1);
+
+        /* Push to output queue */
+        if (!queue_push(ctx->output_queue, result)) {
+            result_item_free(result);
+        }
+
+        work_item_free(item);
     }
 
-    /* Note: mol points to tl_mol, do NOT free - it's reused */
-    return result;
+    molecule_free(tl_mol);
+    return NULL;
 }
 
-/* Worker function for parallel CSV row formatting */
-static void* csv_format_worker(void* arg) {
-    csv_format_task_t* task = (csv_format_task_t*)arg;
+/* Writer thread - writes results to CSV */
+static void* pipeline_writer_thread(void* arg) {
+    pipeline_ctx_t* ctx = (pipeline_ctx_t*)arg;
 
-    csv_bulk_format_row(task->bulk, task->row_idx, task->fields, task->num_fields);
+    result_item_t* result;
+    char line_buffer[65536];  /* 64KB line buffer */
 
-    /* Return task pointer as result (for cleanup tracking) */
-    return task;
+    while ((result = (result_item_t*)queue_pop(ctx->output_queue)) != NULL) {
+        /* Format and write row */
+        int pos = 0;
+        for (int i = 0; i < result->num_fields; i++) {
+            if (i > 0) {
+                line_buffer[pos++] = ctx->delimiter;
+            }
+            const char* field = result->output_fields[i] ? result->output_fields[i] : "";
+
+            /* Check if field needs quoting */
+            bool needs_quote = false;
+            for (const char* p = field; *p; p++) {
+                if (*p == ctx->delimiter || *p == '"' || *p == '\n' || *p == '\r') {
+                    needs_quote = true;
+                    break;
+                }
+            }
+
+            if (needs_quote) {
+                line_buffer[pos++] = '"';
+                for (const char* p = field; *p && pos < 65530; p++) {
+                    if (*p == '"') {
+                        line_buffer[pos++] = '"';
+                    }
+                    line_buffer[pos++] = *p;
+                }
+                line_buffer[pos++] = '"';
+            } else {
+                size_t flen = strlen(field);
+                if (pos + flen < 65530) {
+                    memcpy(line_buffer + pos, field, flen);
+                    pos += flen;
+                }
+            }
+        }
+        line_buffer[pos++] = '\n';
+        line_buffer[pos] = '\0';
+
+        fwrite(line_buffer, 1, pos, ctx->output_file);
+        atomic_fetch_add(&ctx->rows_written, 1);
+
+        result_item_free(result);
+    }
+
+    return NULL;
+}
+
+/* Pipeline compute - streaming with constant memory */
+static int cmd_compute_pipeline(const char* input_file, const char* output_file,
+                                const char* input_col, char** desc_names,
+                                int num_descs, int ncpu, bool skip_canon, bool verbose) {
+    pipeline_ctx_t ctx = {0};
+    ctx.delimiter = ',';
+    ctx.skip_canon = skip_canon;
+    ctx.desc_names = desc_names;
+    ctx.num_descs = num_descs;
+
+    /* Count total rows for progress */
+    ctx.total_rows = csv_count_rows(input_file);
+    if (ctx.total_rows <= 1) {
+        fprintf(stderr, "Error: Input file is empty or has only header\n");
+        return 1;
+    }
+    ctx.total_rows--;  /* Exclude header */
+
+    /* Create mmap reader */
+    ctx.reader = csv_mmap_reader_create(input_file);
+    if (!ctx.reader) {
+        fprintf(stderr, "Error: Failed to open input file: %s\n", input_file);
+        return 1;
+    }
+
+    /* Read and parse header */
+    size_t header_len;
+    const char* header_line = csv_mmap_reader_next_line(ctx.reader, &header_len);
+    if (!header_line) {
+        fprintf(stderr, "Error: Failed to read header\n");
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+
+    const char* header_fields[256];
+    ctx.num_input_fields = csv_mmap_parse_line(header_line, header_len, ctx.delimiter, header_fields, 256);
+
+    /* Find SMILES column */
+    ctx.smiles_col_idx = -1;
+    for (int i = 0; i < ctx.num_input_fields; i++) {
+        if (strcmp(header_fields[i], input_col) == 0) {
+            ctx.smiles_col_idx = i;
+            break;
+        }
+    }
+    if (ctx.smiles_col_idx < 0) {
+        fprintf(stderr, "Error: Column '%s' not found in input file\n", input_col);
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Copy header field names */
+    ctx.header_fields = (char**)calloc(ctx.num_input_fields, sizeof(char*));
+    for (int i = 0; i < ctx.num_input_fields; i++) {
+        ctx.header_fields[i] = strdup(header_fields[i]);
+    }
+
+    /* Open output file */
+    ctx.output_file = fopen(output_file, "w");
+    if (!ctx.output_file) {
+        fprintf(stderr, "Error: Failed to create output file: %s\n", output_file);
+        for (int i = 0; i < ctx.num_input_fields; i++) free(ctx.header_fields[i]);
+        free(ctx.header_fields);
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+    setvbuf(ctx.output_file, NULL, _IOFBF, 262144);  /* 256KB buffer */
+
+    /* Write output header */
+    int out_num_fields = ctx.num_input_fields + num_descs;
+    const char** out_header = (const char**)calloc(out_num_fields, sizeof(char*));
+    for (int i = 0; i < ctx.num_input_fields; i++) {
+        out_header[i] = ctx.header_fields[i];
+    }
+    for (int i = 0; i < num_descs; i++) {
+        out_header[ctx.num_input_fields + i] = desc_names[i];
+    }
+    csv_write_header_line(ctx.output_file, out_header, out_num_fields, ctx.delimiter);
+    free(out_header);
+
+    /* Determine thread count */
+    ctx.num_workers = (ncpu > 0) ? ncpu : parallel_get_num_cores();
+
+    if (verbose) {
+        printf("Pipeline mode: %zu molecules, %d workers\n", ctx.total_rows, ctx.num_workers);
+    }
+
+    /* Create bounded queues */
+    int queue_size = ctx.num_workers * 2;
+    ctx.input_queue = queue_create(queue_size);
+    ctx.output_queue = queue_create(queue_size);
+    if (!ctx.input_queue || !ctx.output_queue) {
+        fprintf(stderr, "Error: Failed to create queues\n");
+        if (ctx.input_queue) queue_free(ctx.input_queue);
+        if (ctx.output_queue) queue_free(ctx.output_queue);
+        fclose(ctx.output_file);
+        for (int i = 0; i < ctx.num_input_fields; i++) free(ctx.header_fields[i]);
+        free(ctx.header_fields);
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Initialize atomics */
+    atomic_store(&ctx.rows_read, 0);
+    atomic_store(&ctx.rows_processed, 0);
+    atomic_store(&ctx.rows_written, 0);
+
+    printf("Computing %d descriptors for %zu molecules...\n", num_descs, ctx.total_rows);
+
+    /* Create progress bar */
+    progress_config_t prog_config = PROGRESS_CONFIG_DEFAULT;
+    prog_config.prefix = "Processing";
+    progress_t* progress = progress_create(ctx.total_rows, &prog_config);
+
+    /* Start reader thread */
+    pthread_create(&ctx.reader_thread, NULL, pipeline_reader_thread, &ctx);
+
+    /* Start worker threads */
+    ctx.worker_threads = (pthread_t*)malloc(ctx.num_workers * sizeof(pthread_t));
+    for (int i = 0; i < ctx.num_workers; i++) {
+        pthread_create(&ctx.worker_threads[i], NULL, pipeline_worker_thread, &ctx);
+    }
+
+    /* Start writer thread */
+    pthread_create(&ctx.writer_thread, NULL, pipeline_writer_thread, &ctx);
+
+    /* Progress monitoring (main thread) */
+    while (atomic_load(&ctx.rows_written) < ctx.total_rows) {
+        size_t written = atomic_load(&ctx.rows_written);
+        progress_update(progress, written);
+        usleep(50000);  /* 50ms */
+    }
+
+    /* Wait for reader to finish */
+    pthread_join(ctx.reader_thread, NULL);
+
+    /* Wait for all workers to finish */
+    for (int i = 0; i < ctx.num_workers; i++) {
+        pthread_join(ctx.worker_threads[i], NULL);
+    }
+
+    /* Signal output queue EOF and wait for writer */
+    queue_close(ctx.output_queue);
+    pthread_join(ctx.writer_thread, NULL);
+
+    progress_finish(progress);
+    progress_free(progress);
+
+    /* Cleanup */
+    queue_free(ctx.input_queue);
+    queue_free(ctx.output_queue);
+    free(ctx.worker_threads);
+    fclose(ctx.output_file);
+    for (int i = 0; i < ctx.num_input_fields; i++) free(ctx.header_fields[i]);
+    free(ctx.header_fields);
+    csv_mmap_reader_free(ctx.reader);
+
+    size_t rows_written = atomic_load(&ctx.rows_written);
+    fprintf(stderr, "\033[KProcessed: %zu/%zu (%.1f%% success)\n",
+           rows_written, ctx.total_rows,
+           ctx.total_rows > 0 ? (double)rows_written / ctx.total_rows * 100.0 : 0.0);
+    fprintf(stderr, "Output written to: %s\n", output_file);
+
+    return 0;
 }
 
 /* Compute command */
@@ -958,7 +1260,7 @@ static int cmd_compute(int argc, char* argv[]) {
         return 0;
     }
 
-    /* CSV batch mode */
+    /* CSV batch mode - use pipeline streaming for constant memory usage */
     if (input_file) {
         if (!input_col) {
             fprintf(stderr, "Error: Input column name required (-s/--col)\n");
@@ -971,318 +1273,24 @@ static int cmd_compute(int argc, char* argv[]) {
             return 1;
         }
 
-        /* Determine number of threads */
-        int actual_ncpu = (ncpu > 0) ? ncpu : parallel_get_num_cores();
-
         if (verbose) {
             printf("Processing: %s\n", input_file);
             printf("Input column: %s\n", input_col);
             printf("Descriptors: %s\n", desc_list);
             printf("Output file: %s\n", output_file);
-            printf("CPU cores: %d\n", actual_ncpu);
+            printf("CPU cores: %s\n", ncpu > 0 ? "specified" : "auto");
             if (skip_canonicalization) {
                 printf("Canonicalization: skipped\n");
             }
             printf("\n");
         }
 
-        /* Read entire input CSV */
-        csv_document_t* in_doc = csv_document_create();
-        if (!in_doc || csv_document_read(in_doc, input_file, true) != CSV_OK) {
-            fprintf(stderr, "Error: Failed to read input file: %s\n", input_file);
-            if (in_doc) csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Find SMILES column */
-        int smiles_col_idx = csv_find_column(&in_doc->header, input_col);
-        if (smiles_col_idx < 0) {
-            fprintf(stderr, "Error: Column '%s' not found in input file\n", input_col);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        size_t total_rows = (size_t)in_doc->num_rows;
-
-        /* Create thread pool */
-        thread_pool_t* pool = thread_pool_create(actual_ncpu);
-        if (!pool) {
-            fprintf(stderr, "Error: Failed to create thread pool\n");
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Pre-allocate task capacity */
-        if (thread_pool_ensure_capacity(pool, (int)total_rows + 1) < 0) {
-            fprintf(stderr, "Error: Failed to allocate task capacity\n");
-            thread_pool_free(pool);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Show processing info */
-        printf("Computing %d descriptors for %zu molecules...\n", num_descs, total_rows);
-
-        /* Create progress bar */
-        progress_config_t prog_config = PROGRESS_CONFIG_DEFAULT;
-        prog_config.prefix = "Computing";
-        progress_t* progress = progress_create(total_rows, &prog_config);
-
-        /* Allocate task arguments */
-        desc_task_arg_t* task_args = (desc_task_arg_t*)calloc(total_rows, sizeof(desc_task_arg_t));
-        if (!task_args) {
-            fprintf(stderr, "Error: Memory allocation failed\n");
-            progress_free(progress);
-            thread_pool_free(pool);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Submit all tasks - avoid strdup, document stays alive during processing */
-        for (int row_idx = 0; row_idx < in_doc->num_rows; row_idx++) {
-            csv_row_t* row = &in_doc->rows[row_idx];
-            const char* row_smiles = (smiles_col_idx < row->num_fields) ?
-                                     row->fields[smiles_col_idx] : NULL;
-
-            task_args[row_idx].row_idx = row_idx;
-            task_args[row_idx].smiles = row_smiles ? row_smiles : "";  /* No strdup - doc stays alive */
-            task_args[row_idx].desc_names = desc_names;
-            task_args[row_idx].num_descs = num_descs;
-            task_args[row_idx].skip_canonicalization = skip_canonicalization;
-
-            thread_pool_submit(pool, desc_batch_worker, &task_args[row_idx]);
-        }
-
-        /* Wait for completion with progress updates */
-        while (thread_pool_num_completed(pool) < (int)total_rows) {
-            int completed = thread_pool_num_completed(pool);
-            progress_update(progress, completed);
-            usleep(50000);  /* 50ms */
-        }
-
-        progress_finish(progress);
-        progress_free(progress);
-
-        /* ================================================================
-         * Phase 2: Parallel CSV formatting + bulk writing
-         * ================================================================ */
-
-        /* Prepare output header: original columns + descriptor columns */
-        int out_num_fields = in_doc->header.num_fields + num_descs;
-        const char** header_fields = (const char**)calloc(out_num_fields, sizeof(char*));
-
-        for (int i = 0; i < in_doc->header.num_fields; i++) {
-            header_fields[i] = in_doc->header.fields[i];
-        }
-        for (int i = 0; i < num_descs; i++) {
-            header_fields[in_doc->header.num_fields + i] = desc_names[i];
-        }
-
-        /* Estimate average line size for bulk writer pre-allocation */
-        size_t avg_line_size = (size_t)(out_num_fields * 12);  /* ~12 chars per field average */
-
-        /* Create bulk writer for parallel row formatting */
-        csv_bulk_writer_t* bulk = csv_bulk_writer_create((int)total_rows, avg_line_size);
-        if (!bulk) {
-            fprintf(stderr, "Error: Failed to create bulk writer\n");
-            free(header_fields);
-            free(task_args);
-            thread_pool_free(pool);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Allocate field buffers for each row (for parallel access) */
-        const char*** all_row_fields = (const char***)calloc(total_rows, sizeof(const char**));
-        csv_format_task_t* format_tasks = (csv_format_task_t*)calloc(total_rows, sizeof(csv_format_task_t));
-        if (!all_row_fields || !format_tasks) {
-            fprintf(stderr, "Error: Memory allocation failed\n");
-            if (all_row_fields) free(all_row_fields);
-            if (format_tasks) free(format_tasks);
-            csv_bulk_writer_free(bulk);
-            free(header_fields);
-            free(task_args);
-            thread_pool_free(pool);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Save descriptor results before reusing pool (need them for both value access and cleanup) */
-        desc_task_result_t** desc_results = (desc_task_result_t**)calloc(total_rows, sizeof(desc_task_result_t*));
-        if (!desc_results) {
-            fprintf(stderr, "Error: Memory allocation failed\n");
-            free(all_row_fields);
-            free(format_tasks);
-            csv_bulk_writer_free(bulk);
-            free(header_fields);
-            free(task_args);
-            thread_pool_free(pool);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-        for (size_t i = 0; i < total_rows; i++) {
-            desc_results[i] = (desc_task_result_t*)thread_pool_get_result(pool, (int)i);
-        }
-
-        /* Count successes and prepare row field arrays */
-        size_t success_count = 0;
-        for (int row_idx = 0; row_idx < in_doc->num_rows; row_idx++) {
-            csv_row_t* row = &in_doc->rows[row_idx];
-            const char** row_fields = (const char**)calloc(out_num_fields, sizeof(const char*));
-            if (!row_fields) {
-                /* Cleanup on failure */
-                for (int j = 0; j < row_idx; j++) {
-                    free((void*)all_row_fields[j]);
-                }
-                for (size_t j = 0; j < total_rows; j++) {
-                    if (desc_results[j]) {
-                        free(desc_results[j]->buffer);
-                        free(desc_results[j]);
-                    }
-                }
-                free(desc_results);
-                free(all_row_fields);
-                free(format_tasks);
-                csv_bulk_writer_free(bulk);
-                free(header_fields);
-                free(task_args);
-                thread_pool_free(pool);
-                csv_document_free(in_doc);
-                descriptor_free_names(desc_names, num_descs);
-                return 1;
-            }
-            all_row_fields[row_idx] = row_fields;
-
-            /* Copy original fields */
-            for (int i = 0; i < in_doc->header.num_fields; i++) {
-                row_fields[i] = (i < row->num_fields && row->fields[i]) ?
-                                row->fields[i] : "";
-            }
-
-            /* Get computed result and fill descriptor values */
-            desc_task_result_t* result = desc_results[row_idx];
-            if (result && result->buffer) {
-                for (int i = 0; i < num_descs; i++) {
-                    const char* raw_value = (i < result->num_values) ? result_value_ptr(result, i) : "";
-                    row_fields[in_doc->header.num_fields + i] = csv_sanitize_numeric(raw_value);
-                }
-                if (result->success) {
-                    success_count++;
-                }
-            } else {
-                for (int i = 0; i < num_descs; i++) {
-                    row_fields[in_doc->header.num_fields + i] = "0";
-                }
-            }
-        }
-
-        /* Clear thread pool completed tasks for reuse */
-        thread_pool_clear_completed(pool);
-
-        /* Ensure capacity for format tasks */
-        if (thread_pool_ensure_capacity(pool, (int)total_rows + 1) < 0) {
-            fprintf(stderr, "Error: Failed to allocate format task capacity\n");
-            for (size_t i = 0; i < total_rows; i++) free((void*)all_row_fields[i]);
-            for (size_t i = 0; i < total_rows; i++) {
-                if (desc_results[i]) { free(desc_results[i]->buffer); free(desc_results[i]); }
-            }
-            free(desc_results);
-            free(all_row_fields);
-            free(format_tasks);
-            csv_bulk_writer_free(bulk);
-            free(header_fields);
-            free(task_args);
-            thread_pool_free(pool);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Show CSV writing progress */
-        printf("Writing CSV output (%d rows)...\n", (int)total_rows);
-
-        /* Submit parallel CSV formatting tasks */
-        for (int row_idx = 0; row_idx < (int)total_rows; row_idx++) {
-            format_tasks[row_idx].row_idx = row_idx;
-            format_tasks[row_idx].bulk = bulk;
-            format_tasks[row_idx].fields = all_row_fields[row_idx];
-            format_tasks[row_idx].num_fields = out_num_fields;
-            thread_pool_submit(pool, csv_format_worker, &format_tasks[row_idx]);
-        }
-
-        /* Wait for all formatting to complete */
-        thread_pool_wait_all(pool);
-
-        /* Open output file and write header + bulk data */
-        FILE* out_file = fopen(output_file, "w");
-        if (!out_file) {
-            fprintf(stderr, "Error: Failed to create output file: %s\n", output_file);
-            for (size_t i = 0; i < total_rows; i++) free((void*)all_row_fields[i]);
-            for (size_t i = 0; i < total_rows; i++) {
-                if (desc_results[i]) { free(desc_results[i]->buffer); free(desc_results[i]); }
-            }
-            free(desc_results);
-            free(all_row_fields);
-            free(format_tasks);
-            csv_bulk_writer_free(bulk);
-            free(header_fields);
-            free(task_args);
-            thread_pool_free(pool);
-            csv_document_free(in_doc);
-            descriptor_free_names(desc_names, num_descs);
-            return 1;
-        }
-
-        /* Use large buffer for output file */
-        setvbuf(out_file, NULL, _IOFBF, 262144);  /* 256KB buffer */
-
-        /* Write header */
-        csv_write_header_line(out_file, header_fields, out_num_fields, ',');
-
-        /* Bulk write all formatted rows */
-        csv_status_t write_status = csv_bulk_write_all(bulk, out_file);
-        fclose(out_file);
-
-        if (write_status != CSV_OK) {
-            fprintf(stderr, "Error: Failed to write output file\n");
-        }
-
-        /* Cleanup descriptor results (saved before pool reuse) */
-        for (size_t i = 0; i < total_rows; i++) {
-            if (desc_results[i]) {
-                free(desc_results[i]->buffer);
-                free(desc_results[i]);
-            }
-        }
-        free(desc_results);
-
-        /* Cleanup row field arrays */
-        for (size_t i = 0; i < total_rows; i++) {
-            free((void*)all_row_fields[i]);
-        }
-        free(all_row_fields);
-        free(format_tasks);
-        csv_bulk_writer_free(bulk);
-        free(header_fields);
-        free(task_args);
-        thread_pool_free(pool);
-        csv_document_free(in_doc);
+        /* Use pipeline streaming for constant memory regardless of input size */
+        int result = cmd_compute_pipeline(input_file, output_file, input_col,
+                                          desc_names, num_descs, ncpu,
+                                          skip_canonicalization, verbose);
         descriptor_free_names(desc_names, num_descs);
-
-        printf("Processed: %zu/%zu (%.1f%% success)\n",
-               success_count, total_rows,
-               total_rows > 0 ? (double)success_count / total_rows * 100.0 : 0.0);
-        printf("Output written to: %s\n", output_file);
-
-        return 0;
+        return result;
     }
 
     /* No input specified */

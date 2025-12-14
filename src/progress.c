@@ -1,6 +1,6 @@
 /**
  * @file progress.c
- * @brief Progress bar with rate estimation implementation
+ * @brief Modern gradient progress bar with rate estimation
  */
 
 #include <stdlib.h>
@@ -11,21 +11,9 @@
 #include "cchem/progress.h"
 
 #define RATE_SAMPLES 10
-#define MIN_UPDATE_INTERVAL_MS 100
+#define MIN_UPDATE_INTERVAL_MS 50
 
-/* ANSI color codes */
-#define COLOR_RESET   "\033[0m"
-#define COLOR_GREEN   "\033[32m"
-#define COLOR_CYAN    "\033[36m"
-#define COLOR_DIM     "\033[2m"
-#define COLOR_BOLD    "\033[1m"
 
-/* Unicode block characters for smooth progress bar */
-static const char* BLOCK_FULL = "█";
-static const char* BLOCK_EMPTY = "░";
-static const char* PARTIAL_BLOCKS[] = {
-    " ", "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█"
-};
 
 const progress_config_t PROGRESS_CONFIG_DEFAULT = {
     .bar_width = 30,
@@ -118,19 +106,19 @@ void progress_format_time(double seconds, char* buf, size_t buf_size) {
     if (hours > 0) {
         snprintf(buf, buf_size, "%d:%02d:%02d", hours, mins, secs);
     } else {
-        snprintf(buf, buf_size, "%d:%02d", mins, secs);
+        snprintf(buf, buf_size, "%02d:%02d", mins, secs);
     }
 }
 
 void progress_format_rate(double rate, char* buf, size_t buf_size) {
     if (rate < 1.0) {
-        snprintf(buf, buf_size, "%.2f it/s", rate);
+        snprintf(buf, buf_size, "%5.2f/s", rate);
     } else if (rate < 1000.0) {
-        snprintf(buf, buf_size, "%.1f it/s", rate);
+        snprintf(buf, buf_size, "%5.1f/s", rate);
     } else if (rate < 1000000.0) {
-        snprintf(buf, buf_size, "%.1fk it/s", rate / 1000.0);
+        snprintf(buf, buf_size, "%5.1fK/s", rate / 1000.0);
     } else {
-        snprintf(buf, buf_size, "%.1fM it/s", rate / 1000000.0);
+        snprintf(buf, buf_size, "%5.1fM/s", rate / 1000000.0);
     }
 }
 
@@ -144,14 +132,12 @@ static void update_rate(progress_t* progress) {
 
     if (elapsed_since_sample_ms >= sample_interval && progress->current > progress->last_count) {
         size_t count_diff = progress->current - progress->last_count;
-        double sample_rate = (count_diff / elapsed_since_sample_ms) * 1000.0;  /* items/sec */
+        double sample_rate = (count_diff / elapsed_since_sample_ms) * 1000.0;
 
-        /* Add to rolling average */
         progress->rate_samples[progress->sample_idx] = sample_rate;
         progress->sample_idx = (progress->sample_idx + 1) % RATE_SAMPLES;
         if (progress->num_samples < RATE_SAMPLES) progress->num_samples++;
 
-        /* Calculate average */
         double sum = 0;
         for (int i = 0; i < progress->num_samples; i++) {
             sum += progress->rate_samples[i];
@@ -162,7 +148,7 @@ static void update_rate(progress_t* progress) {
         progress->last_sample_time_ms = now_ms;
     }
 
-    /* Fallback: calculate overall rate if no samples yet but enough time elapsed */
+    /* Fallback: calculate overall rate if no samples yet */
     if (progress->rate == 0.0 && elapsed_total_ms >= 50.0 && progress->current > 0) {
         progress->rate = (progress->current / elapsed_total_ms) * 1000.0;
     }
@@ -171,88 +157,56 @@ static void update_rate(progress_t* progress) {
 static void draw_progress(progress_t* progress) {
     if (!progress) return;
 
-    double percent = progress_get_percent(progress);
-    double fill_exact = percent / 100.0 * progress->config.bar_width;
-    int filled = (int)fill_exact;
-    int partial_idx = (int)((fill_exact - filled) * 8);  /* 8 partial block levels */
-    if (filled > progress->config.bar_width) filled = progress->config.bar_width;
-    if (partial_idx < 0) partial_idx = 0;
-    if (partial_idx > 8) partial_idx = 8;
+    double pct = progress_get_percent(progress);
+    double elapsed_s = progress_get_elapsed(progress);
+    double eta_s = progress_get_eta(progress);
 
-    /* Clear entire line and move to start */
-    fprintf(stderr, "\r\033[K");
+    char elapsed_str[16], eta_str[16], rate_str[16];
+    progress_format_time(elapsed_s, elapsed_str, sizeof(elapsed_str));
+    progress_format_time(eta_s, eta_str, sizeof(eta_str));
+    progress_format_rate(progress->rate, rate_str, sizeof(rate_str));
+
+    /* Build output in buffer to avoid flicker */
+    char output[512];
+    int pos = 0;
+
+    /* Unified ninja-style: [current/total] prefix percent rate ETA [elapsed] */
+    pos += snprintf(output + pos, sizeof(output) - pos,
+                    "\r[%zu/%zu]", progress->current, progress->total);
 
     /* Prefix */
     if (progress->config.prefix && progress->config.prefix[0]) {
-        fprintf(stderr, "%s ", progress->config.prefix);
+        pos += snprintf(output + pos, sizeof(output) - pos,
+                        " %s", progress->config.prefix);
     }
-
-    /* Progress bar with Unicode blocks and colors */
-    fprintf(stderr, COLOR_DIM "│" COLOR_RESET);
-
-    /* Filled portion (green) */
-    fprintf(stderr, COLOR_GREEN);
-    for (int i = 0; i < filled; i++) {
-        fprintf(stderr, "%s", BLOCK_FULL);
-    }
-
-    /* Partial block for smooth transition */
-    if (filled < progress->config.bar_width && partial_idx > 0) {
-        fprintf(stderr, "%s", PARTIAL_BLOCKS[partial_idx]);
-        filled++;  /* Account for partial block position */
-    }
-    fprintf(stderr, COLOR_RESET);
-
-    /* Empty portion (dim) */
-    fprintf(stderr, COLOR_DIM);
-    for (int i = filled; i < progress->config.bar_width; i++) {
-        fprintf(stderr, "%s", BLOCK_EMPTY);
-    }
-    fprintf(stderr, COLOR_RESET);
-
-    fprintf(stderr, COLOR_DIM "│" COLOR_RESET);
 
     /* Percentage */
     if (progress->config.show_percent) {
-        fprintf(stderr, " " COLOR_BOLD "%5.1f%%" COLOR_RESET, percent);
-    }
-
-    /* Count */
-    if (progress->config.show_count) {
-        fprintf(stderr, " %zu/%zu", progress->current, progress->total);
+        pos += snprintf(output + pos, sizeof(output) - pos, " %5.1f%%", pct);
     }
 
     /* Rate */
     if (progress->config.show_rate && progress->rate > 0) {
-        char rate_buf[32];
-        progress_format_rate(progress->rate, rate_buf, sizeof(rate_buf));
-        fprintf(stderr, " " COLOR_CYAN "[%s]" COLOR_RESET, rate_buf);
+        pos += snprintf(output + pos, sizeof(output) - pos, " %s", rate_str);
     }
 
     /* ETA */
     if (progress->config.show_eta && progress->rate > 0 && !progress->finished) {
-        double eta = progress_get_eta(progress);
-        if (eta > 0 && eta < 86400 * 365) {  /* Less than a year */
-            char eta_buf[32];
-            progress_format_time(eta, eta_buf, sizeof(eta_buf));
-            fprintf(stderr, " ETA: %s", eta_buf);
+        if (eta_s > 0 && eta_s < 86400 * 365) {
+            pos += snprintf(output + pos, sizeof(output) - pos, " ETA %s", eta_str);
         }
     }
 
-    /* Elapsed time for finished */
-    if (progress->finished) {
-        double elapsed = progress_get_elapsed(progress);
-        char elapsed_buf[32];
-        progress_format_time(elapsed, elapsed_buf, sizeof(elapsed_buf));
-        fprintf(stderr, " " COLOR_GREEN "[%s]" COLOR_RESET, elapsed_buf);
-    }
+    /* Elapsed time */
+    pos += snprintf(output + pos, sizeof(output) - pos, " [%s]", elapsed_str);
 
-    /* Suffix */
-    if (progress->config.suffix && progress->config.suffix[0]) {
-        fprintf(stderr, " %s", progress->config.suffix);
-    }
+    /* Clear to end of line */
+    pos += snprintf(output + pos, sizeof(output) - pos, "\033[K");
 
+    /* Single write to stderr */
+    fputs(output, stderr);
     fflush(stderr);
+
     progress->shown = true;
 }
 
@@ -291,11 +245,10 @@ void progress_finish(progress_t* progress) {
     progress->current = progress->total;
     progress->finished = true;
 
-    /* Calculate final rate if not already computed */
+    /* Calculate final rate */
     double elapsed_ms = get_time_ms() - progress->start_time_ms;
     if (elapsed_ms > 0 && progress->total > 0) {
         double final_rate = (progress->total / elapsed_ms) * 1000.0;
-        /* Use final rate if higher confidence (full run) or no rate computed */
         if (progress->rate == 0.0 || progress->num_samples < 3) {
             progress->rate = final_rate;
         }
@@ -318,14 +271,12 @@ double progress_get_rate(const progress_t* progress) {
 
 double progress_get_elapsed(const progress_t* progress) {
     if (!progress) return 0.0;
-
     double now_ms = get_time_ms();
-    return (now_ms - progress->start_time_ms) / 1000.0;  /* Convert to seconds */
+    return (now_ms - progress->start_time_ms) / 1000.0;
 }
 
 double progress_get_eta(const progress_t* progress) {
     if (!progress || progress->rate <= 0) return 0.0;
-
     size_t remaining = progress->total - progress->current;
     return (double)remaining / progress->rate;
 }

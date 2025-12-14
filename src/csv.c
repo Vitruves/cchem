@@ -1092,6 +1092,32 @@ csv_status_t csv_bulk_write_all(csv_bulk_writer_t* bulk, FILE* file) {
     return CSV_OK;
 }
 
+/* Bulk write with ninja-style progress */
+csv_status_t csv_bulk_write_all_progress(csv_bulk_writer_t* bulk, FILE* file) {
+    if (!bulk || !file) return CSV_ERROR_INVALID;
+
+    int total = bulk->num_lines;
+    int update_interval = total > 1000 ? total / 100 : 10;  /* ~100 updates max */
+    if (update_interval < 1) update_interval = 1;
+
+    for (int i = 0; i < total; i++) {
+        if (fwrite(bulk->lines[i].data, 1, bulk->lines[i].len, file) != bulk->lines[i].len) {
+            fprintf(stderr, "\r\033[K");
+            return CSV_ERROR_IO;
+        }
+
+        /* Unified progress: [current/total] Writing */
+        if (i % update_interval == 0 || i == total - 1) {
+            fprintf(stderr, "\r[%d/%d] Writing\033[K", i + 1, total);
+            fflush(stderr);
+        }
+    }
+
+    fprintf(stderr, "\r");  /* Return to start of line */
+    fflush(stderr);
+    return CSV_OK;
+}
+
 /* Write header line directly to file */
 csv_status_t csv_write_header_line(FILE* file, const char** fields,
                                     int num_fields, char delimiter) {

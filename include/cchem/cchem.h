@@ -24,7 +24,8 @@
 /* Utilities */
 #include "csv.h"
 #include "progress.h"
-#include "parallel.h"
+#include "threading.h"
+#include "memory.h"
 
 /* Version information */
 #define CCHEM_VERSION_MAJOR 1

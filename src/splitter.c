@@ -13,7 +13,7 @@
 #include "cchem/splitter.h"
 #include "cchem/cchem.h"
 #include "cchem/csv.h"
-#include "cchem/parallel.h"
+#include "cchem/threading.h"
 #include "cchem/progress.h"
 
 /* ========================================================================

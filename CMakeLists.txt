@@ -76,11 +76,10 @@ set(CCHEM_SOURCES
     src/canonicalizer/ring_finder.c
     src/canonicalizer/stereo.c
     src/canonicalizer/sanitize.c
-    src/arena.c
-    src/mol_soa.c
+    src/memory.c
+    src/threading.c
     src/csv.c
     src/progress.c
-    src/parallel.c
     src/splitter.c
     src/descriptors/registry.c
     src/descriptors/counts.c

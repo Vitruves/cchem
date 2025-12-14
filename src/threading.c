@@ -1,6 +1,6 @@
 /**
- * @file parallel.c
- * @brief Parallel processing utilities using pthreads
+ * @file threading.c
+ * @brief Threading utilities implementation
  */
 
 #include <stdlib.h>
@@ -8,11 +8,181 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
-#include "cchem/parallel.h"
+#include "cchem/threading.h"
 #include "cchem/csv.h"
 #include "cchem/progress.h"
 #include "cchem/canonicalizer/canon.h"
 #include "cchem/canonicalizer/parser.h"
+
+/* ============================================================================
+ * Bounded Queue Implementation
+ * ============================================================================ */
+
+bounded_queue_t* queue_create(int capacity) {
+    if (capacity <= 0) return NULL;
+
+    bounded_queue_t* q = (bounded_queue_t*)calloc(1, sizeof(bounded_queue_t));
+    if (!q) return NULL;
+
+    q->items = (void**)calloc(capacity, sizeof(void*));
+    if (!q->items) {
+        free(q);
+        return NULL;
+    }
+
+    q->capacity = capacity;
+    q->head = 0;
+    q->tail = 0;
+    q->count = 0;
+    q->closed = false;
+
+    if (pthread_mutex_init(&q->mutex, NULL) != 0) {
+        free(q->items);
+        free(q);
+        return NULL;
+    }
+
+    if (pthread_cond_init(&q->not_full, NULL) != 0) {
+        pthread_mutex_destroy(&q->mutex);
+        free(q->items);
+        free(q);
+        return NULL;
+    }
+
+    if (pthread_cond_init(&q->not_empty, NULL) != 0) {
+        pthread_cond_destroy(&q->not_full);
+        pthread_mutex_destroy(&q->mutex);
+        free(q->items);
+        free(q);
+        return NULL;
+    }
+
+    return q;
+}
+
+void queue_free(bounded_queue_t* q) {
+    if (!q) return;
+
+    pthread_cond_destroy(&q->not_empty);
+    pthread_cond_destroy(&q->not_full);
+    pthread_mutex_destroy(&q->mutex);
+    free(q->items);
+    free(q);
+}
+
+bool queue_push(bounded_queue_t* q, void* item) {
+    if (!q || !item) return false;
+
+    pthread_mutex_lock(&q->mutex);
+
+    /* Wait while queue is full and not closed */
+    while (q->count == q->capacity && !q->closed) {
+        pthread_cond_wait(&q->not_full, &q->mutex);
+    }
+
+    /* If queue was closed while waiting, reject push */
+    if (q->closed) {
+        pthread_mutex_unlock(&q->mutex);
+        return false;
+    }
+
+    /* Add item to tail */
+    q->items[q->tail] = item;
+    q->tail = (q->tail + 1) % q->capacity;
+    q->count++;
+
+    /* Signal that queue is not empty */
+    pthread_cond_signal(&q->not_empty);
+
+    pthread_mutex_unlock(&q->mutex);
+    return true;
+}
+
+void* queue_pop(bounded_queue_t* q) {
+    if (!q) return NULL;
+
+    pthread_mutex_lock(&q->mutex);
+
+    /* Wait while queue is empty and not closed */
+    while (q->count == 0 && !q->closed) {
+        pthread_cond_wait(&q->not_empty, &q->mutex);
+    }
+
+    /* If queue is empty and closed, return NULL (EOF) */
+    if (q->count == 0) {
+        pthread_mutex_unlock(&q->mutex);
+        return NULL;
+    }
+
+    /* Remove item from head */
+    void* item = q->items[q->head];
+    q->items[q->head] = NULL;
+    q->head = (q->head + 1) % q->capacity;
+    q->count--;
+
+    /* Signal that queue is not full */
+    pthread_cond_signal(&q->not_full);
+
+    pthread_mutex_unlock(&q->mutex);
+    return item;
+}
+
+bool queue_try_pop(bounded_queue_t* q, void** out) {
+    if (!q || !out) return false;
+
+    pthread_mutex_lock(&q->mutex);
+
+    if (q->count == 0) {
+        pthread_mutex_unlock(&q->mutex);
+        *out = NULL;
+        return false;
+    }
+
+    /* Remove item from head */
+    *out = q->items[q->head];
+    q->items[q->head] = NULL;
+    q->head = (q->head + 1) % q->capacity;
+    q->count--;
+
+    /* Signal that queue is not full */
+    pthread_cond_signal(&q->not_full);
+
+    pthread_mutex_unlock(&q->mutex);
+    return true;
+}
+
+void queue_close(bounded_queue_t* q) {
+    if (!q) return;
+
+    pthread_mutex_lock(&q->mutex);
+    q->closed = true;
+    /* Wake up all waiting threads */
+    pthread_cond_broadcast(&q->not_full);
+    pthread_cond_broadcast(&q->not_empty);
+    pthread_mutex_unlock(&q->mutex);
+}
+
+bool queue_is_closed(bounded_queue_t* q) {
+    if (!q) return true;
+
+    pthread_mutex_lock(&q->mutex);
+    bool closed = q->closed;
+    pthread_mutex_unlock(&q->mutex);
+    return closed;
+}
+
+int queue_count(bounded_queue_t* q) {
+    if (!q) return 0;
+
+    pthread_mutex_lock(&q->mutex);
+    int count = q->count;
+    pthread_mutex_unlock(&q->mutex);
+    return count;
+}
+
+/* ============================================================================
+ * Thread Pool Implementation
+ * ============================================================================ */
 
 int parallel_get_num_cores(void) {
 #ifdef _SC_NPROCESSORS_ONLN
@@ -230,6 +400,10 @@ void thread_pool_clear_completed(thread_pool_t* pool) {
 
     pthread_mutex_unlock(&pool->mutex);
 }
+
+/* ============================================================================
+ * CSV Batch Processing Implementation
+ * ============================================================================ */
 
 /* Batch processing types */
 typedef struct {

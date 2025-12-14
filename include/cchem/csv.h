@@ -173,6 +173,11 @@ csv_status_t csv_bulk_format_row(csv_bulk_writer_t* bulk, int row_idx,
  */
 csv_status_t csv_bulk_write_all(csv_bulk_writer_t* bulk, FILE* file);
 
+/* Write all formatted lines with ninja-style progress indicator
+ * Prints [current/total] to stderr during write
+ */
+csv_status_t csv_bulk_write_all_progress(csv_bulk_writer_t* bulk, FILE* file);
+
 /* Write a single pre-formatted header line (not from bulk buffers) */
 csv_status_t csv_write_header_line(FILE* file, const char** fields,
                                     int num_fields, char delimiter);
