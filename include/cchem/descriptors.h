@@ -552,4 +552,46 @@ void descriptors_register_bcut(void);
  */
 void descriptors_register_zagreb(void);
 
+/**
+ * Register Information Content descriptors (from infocontent.c)
+ * - Shannon entropy based molecular complexity
+ * - IC, SIC, CIC, TIC at various orders
+ * - Bonding information content, Bertz complexity
+ * - 24 descriptors
+ */
+void descriptors_register_infocontent(void);
+
+/**
+ * Register Walk Count descriptors (from walkcounts.c)
+ * - Molecular walk counts (adjacency matrix powers)
+ * - Path counts, self-returning walks
+ * - 36 descriptors
+ */
+void descriptors_register_walkcounts(void);
+
+/**
+ * Register E-State Sum descriptors (from estate_sums.c)
+ * - Sum of E-State indices by atom type
+ * - E-State statistics (min, max, mean, range)
+ * - 32 descriptors
+ */
+void descriptors_register_estate_sums(void);
+
+/**
+ * Register Extended Topological Atom (ETA) descriptors (from eta.c)
+ * - Shape, core, epsilon indices
+ * - Composite ETA indices
+ * - 24 descriptors
+ */
+void descriptors_register_eta(void);
+
+/**
+ * Register Ring Complexity descriptors (from ringcomplexity.c)
+ * - Ring size distribution
+ * - Fusion patterns (fused, spiro, bridgehead)
+ * - Ring complexity indices
+ * - 18 descriptors
+ */
+void descriptors_register_ringcomplexity(void);
+
 #endif /* CCHEM_DESCRIPTORS_H */

@@ -64,6 +64,11 @@ void descriptors_init(void) {
     descriptors_register_atompairs();
     descriptors_register_bcut();
     descriptors_register_zagreb();
+    descriptors_register_infocontent();
+    descriptors_register_walkcounts();
+    descriptors_register_estate_sums();
+    descriptors_register_eta();
+    descriptors_register_ringcomplexity();
 }
 
 void descriptors_cleanup(void) {

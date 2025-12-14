@@ -19,6 +19,7 @@
 #include "canonicalizer/stereo.h"
 #include "canonicalizer/canon.h"
 #include "canonicalizer/smiles_writer.h"
+#include "canonicalizer/sanitize.h"
 
 /* Utilities */
 #include "csv.h"

@@ -5,6 +5,7 @@ High-performance cheminformatics library written in pure C.
 **Key Features:**
 - 500+ molecular descriptors
 - SMILES canonicalization with stereochemistry support
+- Molecular sanitization (salt removal, aromatization, neutralization, tautomers)
 - 2D/3D molecular visualization with MMFF94 force field
 - Multi-threaded batch processing with SIMD optimization
 
@@ -16,6 +17,15 @@ High-performance cheminformatics library written in pure C.
 - Smallest Set of Smallest Rings (SSSR) detection
 - Aromaticity perception
 - Isotope and hydrogen handling
+
+### Molecular Sanitization
+- **Salt removal**: Identify and remove counter-ions (Na+, K+, Cl-, etc.)
+- **Aromatization**: Perceive aromaticity using Hückel's rule (4n+2 π electrons)
+- **Kekulization**: Convert aromatic bonds to alternating single/double
+- **Neutralization**: Remove protonation states (R-NH3+ → R-NH2, R-O- → R-OH)
+- **Normalization**: Standardize functional groups (nitro, sulfoxide, phosphate)
+- **Tautomer enumeration**: Generate keto-enol, amide-imidic acid tautomers
+- **Cleanup options**: Remove stereochemistry, isotopes, explicit hydrogens
 
 ### Molecular Descriptors (500+)
 
@@ -100,6 +110,30 @@ make -j$(nproc)
 ./cchem canonicalize -f molecules.csv -s smiles -c canonical -o output.csv -n 4
 ```
 
+### Sanitize Molecules
+
+```bash
+# Complete sanitization (unsalt + aromatize + neutralize + normalize)
+./cchem canonicalize -S "[Na+].CC(=O)[O-]" --sanitize complete
+# Output: C(=O)(O)C  (acetic acid, Na+ removed, carboxylate neutralized)
+
+# Remove salts only
+./cchem canonicalize -S "CCO.[Cl-].[Na+]" --sanitize unsalt
+# Output: CCO
+
+# Aromatize Kekule form
+./cchem canonicalize -S "C1=CC=CC=C1" --sanitize aromatize
+# Output: c1ccccc1
+
+# Multiple operations
+./cchem canonicalize -S "[NH3+]Cc1ccccc1.[Cl-]" --sanitize unsalt,neutralize,aromatize
+# Output: c1ccc(cc1)C[NH2]  (benzylamine)
+
+# List tautomers
+./cchem canonicalize -S "CC(=O)CC" --list-tautomers
+# Output: CCC(=O)C  (keto-enol tautomers)
+```
+
 ### Compute Descriptors
 
 ```bash
@@ -138,7 +172,7 @@ make -j$(nproc)
 
 ### canonicalize
 
-Convert SMILES to canonical form.
+Convert SMILES to canonical form (aromatized by default) with optional sanitization.
 
 ```
 Usage: cchem canonicalize [options]
@@ -149,10 +183,21 @@ Options:
   -s, --smiles-col <name>   Column name containing SMILES (default: smiles)
   -c, --canon-col <name>    Output column name for canonical SMILES
   -o, --output <path>       Output file path
-  -n, --threads <num>       Number of threads (default: 1)
-  --no-stereo               Strip stereochemistry information
-  --no-isotopes             Strip isotope labels
+  -n, --threads <num>       Number of threads (default: auto)
+  --sanitize <opts>         Apply sanitization before canonicalization
+                            Values: "complete" or comma-separated list of:
+                              unsalt          - Remove salts, keep largest fragment
+                              aromatize       - Perceive and apply aromaticity (default)
+                              kekulize        - Convert aromatic to Kekule form
+                              neutralize      - Neutralize charges
+                              normalize       - Normalize functional groups
+                              remove-stereo   - Remove stereochemistry
+                              remove-isotopes - Remove isotope labels
+                              remove-h        - Remove explicit hydrogens
+                              validate        - Validate structure
+  --list-tautomers          List all tautomeric forms
   -v, --verbose             Enable verbose output
+  -h, --help                Print this help message
 ```
 
 ### compute
@@ -286,10 +331,14 @@ cchem/
 │   ├── cchem.h              # Main library header
 │   ├── descriptors.h        # Descriptor system
 │   ├── canonicalizer/       # SMILES parsing & canonicalization
+│   │   ├── sanitize.h       # Sanitization API
+│   │   └── ...              # Parser, molecule, stereo, etc.
 │   └── depictor/            # 2D/3D visualization
 ├── src/
 │   ├── main.c               # CLI entry point
 │   ├── canonicalizer/       # SMILES implementation
+│   │   ├── sanitize.c       # Sanitization implementation
+│   │   └── ...
 │   ├── descriptors/         # 500+ descriptor implementations
 │   └── depictor/            # Visualization & MMFF94
 ├── tests/                   # Test suite

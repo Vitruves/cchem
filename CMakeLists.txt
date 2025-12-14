@@ -72,6 +72,7 @@ set(CCHEM_SOURCES
     src/canonicalizer/smiles_writer.c
     src/canonicalizer/ring_finder.c
     src/canonicalizer/stereo.c
+    src/canonicalizer/sanitize.c
     src/arena.c
     src/mol_soa.c
     src/csv.c
@@ -103,6 +104,11 @@ set(CCHEM_SOURCES
     src/descriptors/atompairs.c
     src/descriptors/bcut.c
     src/descriptors/zagreb.c
+    src/descriptors/infocontent.c
+    src/descriptors/walkcounts.c
+    src/descriptors/estate_sums.c
+    src/descriptors/eta.c
+    src/descriptors/ringcomplexity.c
     src/depictor/types.c
     src/depictor/colors.c
     src/depictor/coords2d.c
@@ -161,6 +167,10 @@ add_test(NAME test_descriptors COMMAND test_descriptors)
 add_executable(test_mmff94 tests/test_mmff94.c)
 target_link_libraries(test_mmff94 PRIVATE cchem_lib m)
 add_test(NAME test_mmff94 COMMAND test_mmff94)
+
+add_executable(test_sanitize tests/test_sanitize.c)
+target_link_libraries(test_sanitize PRIVATE cchem_lib m)
+add_test(NAME test_sanitize COMMAND test_sanitize)
 
 # LogD 7.4 development test
 #add_executable(logd74_test temp/logd74.c)
