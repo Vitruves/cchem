@@ -1,16 +1,17 @@
 /**
  * @file graph.c
- * @brief Ultra-fast graph-based molecular descriptors using igraph
+ * @brief Graph-based molecular descriptors (igraph-free implementation)
  *
- * ADME-relevant graph topology descriptors computed from molecular graphs.
+ * Native implementation of graph topology descriptors computed from molecular graphs.
  * All descriptors computed in single batch pass for maximum efficiency.
+ * Thread-safe - no external library dependencies.
  *
  * Descriptor categories:
  * - Connectivity: density, degree statistics (permeability, size)
  * - Path-based: diameter, Wiener index (shape, flexibility)
  * - Centrality: betweenness, closeness (metabolic sites)
  * - Clustering: transitivity (ring systems, compactness)
- * - Spectral: eigenvalues (electronic properties proxy)
+ * - Spectral: eigenvalues (approximated from degree sequence)
  * - ADME-specific: polar centrality, aromatic connectivity
  */
 
@@ -18,35 +19,18 @@
 #include <stdlib.h>
 #include <math.h>
 #include <stdbool.h>
-#include <igraph.h>
 #include "cchem/descriptors.h"
 #include "cchem/canonicalizer/molecule.h"
 #include "cchem/canonicalizer/atom.h"
 #include "cchem/canonicalizer/bond.h"
 
-/* Thread-safe igraph initialization.
- * igraph's default error handler uses a non-thread-safe "finally stack".
- * We disable it and rely on return value checking instead. */
-static void ensure_igraph_thread_safe(void) {
-    static _Atomic int initialized = 0;
-    if (!initialized) {
-        igraph_set_error_handler(igraph_error_handler_ignore);
-        initialized = 1;
-    }
-}
-
-/* igraph API differences between versions:
- * - igraph 0.10.x: weights parameter at END of function args
- * - igraph 1.0.0+: weights parameter near BEGINNING, plus normalized param
- * Detect version and use appropriate API */
-#if defined(IGRAPH_VERSION_MAJOR) && IGRAPH_VERSION_MAJOR >= 1
-    #define IGRAPH_API_V1 1
-#else
-    #define IGRAPH_API_V1 0
-#endif
-
 #define NUM_GRAPH_DESCRIPTORS 30
-#define LARGE_DIST 1e20  /* Large constant for distance comparisons (avoids -ffast-math issues) */
+#define GRAPH_MAX_ATOMS 512
+
+/* Size thresholds for expensive operations */
+#define GRAPH_SIZE_SMALL 30    /* Full computation for small molecules */
+#define GRAPH_SIZE_MEDIUM 60   /* Skip some expensive ops */
+#define GRAPH_SIZE_LARGE 150   /* Use approximations */
 
 /* ============================================================================
  * Graph Statistics Structure
@@ -84,7 +68,7 @@ typedef struct {
     double mean_local_clustering;
     double transitivity;
 
-    /* Spectral */
+    /* Spectral (approximations) */
     double spectral_radius;
     double graph_energy;
     double algebraic_connectivity;
@@ -96,236 +80,507 @@ typedef struct {
     double edge_connectivity;
 
     /* ADME-specific */
-    double polar_centrality;      /* Mean centrality of heteroatoms */
-    double aromatic_connectivity; /* Aromatic subgraph connectivity */
-    double branching_index;       /* Molecular branching factor */
-    double peripheral_ratio;      /* Ratio of peripheral atoms */
-    double core_ratio;            /* Ratio of core atoms */
+    double polar_centrality;
+    double aromatic_connectivity;
+    double branching_index;
+    double peripheral_ratio;
+    double core_ratio;
 } graph_stats_t;
 
 /* ============================================================================
  * Helper Functions
  * ============================================================================ */
 
-/* Build igraph from molecule - heavy atoms only for speed */
-static igraph_t* molecule_to_igraph(const molecule_t* mol, int** atom_map, int* n_heavy) {
-    if (!mol || mol->num_atoms == 0) return NULL;
-
-    /* Count heavy atoms and build mapping */
-    int* map = (int*)malloc(mol->num_atoms * sizeof(int));
-    if (!map) return NULL;
-
-    int heavy_count = 0;
-    for (int i = 0; i < mol->num_atoms; i++) {
-        if (mol->atoms[i].element != ELEM_H) {
-            map[i] = heavy_count++;
-        } else {
-            map[i] = -1;
+static int get_heavy_degree(const molecule_t* mol, int atom_idx) {
+    const atom_t* atom = &mol->atoms[atom_idx];
+    int degree = 0;
+    for (int i = 0; i < atom->num_neighbors; i++) {
+        if (mol->atoms[atom->neighbors[i]].element != ELEM_H) {
+            degree++;
         }
     }
-
-    if (heavy_count < 2) {
-        free(map);
-        return NULL;
-    }
-
-    /* Count edges between heavy atoms */
-    int edge_count = 0;
-    for (int i = 0; i < mol->num_bonds; i++) {
-        int a1 = mol->bonds[i].atom1;
-        int a2 = mol->bonds[i].atom2;
-        if (map[a1] >= 0 && map[a2] >= 0) {
-            edge_count++;
-        }
-    }
-
-    /* Build edge list */
-    igraph_vector_int_t edges;
-    igraph_vector_int_init(&edges, edge_count * 2);
-
-    int idx = 0;
-    for (int i = 0; i < mol->num_bonds; i++) {
-        int a1 = mol->bonds[i].atom1;
-        int a2 = mol->bonds[i].atom2;
-        if (map[a1] >= 0 && map[a2] >= 0) {
-            VECTOR(edges)[idx++] = map[a1];
-            VECTOR(edges)[idx++] = map[a2];
-        }
-    }
-
-    /* Create graph */
-    igraph_t* g = (igraph_t*)malloc(sizeof(igraph_t));
-    if (!g) {
-        igraph_vector_int_destroy(&edges);
-        free(map);
-        return NULL;
-    }
-
-    igraph_error_t err = igraph_create(g, &edges, heavy_count, IGRAPH_UNDIRECTED);
-    igraph_vector_int_destroy(&edges);
-
-    if (err != IGRAPH_SUCCESS) {
-        free(g);
-        free(map);
-        return NULL;
-    }
-
-    *atom_map = map;
-    *n_heavy = heavy_count;
-    return g;
+    return degree;
 }
 
-static void free_igraph(igraph_t* g, int* atom_map) {
-    if (g) {
-        igraph_destroy(g);
-        free(g);
+static int count_heavy_atoms(const molecule_t* mol) {
+    int count = 0;
+    for (int i = 0; i < mol->num_atoms; i++) {
+        if (mol->atoms[i].element != ELEM_H) count++;
     }
-    if (atom_map) free(atom_map);
+    return count;
+}
+
+static int count_heavy_bonds(const molecule_t* mol) {
+    int count = 0;
+    for (int i = 0; i < mol->num_bonds; i++) {
+        if (mol->atoms[mol->bonds[i].atom1].element != ELEM_H &&
+            mol->atoms[mol->bonds[i].atom2].element != ELEM_H) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static bool is_polar_heavy(element_t elem) {
+    return elem == ELEM_N || elem == ELEM_O || elem == ELEM_S ||
+           elem == ELEM_P || elem == ELEM_F || elem == ELEM_Cl ||
+           elem == ELEM_Br || elem == ELEM_I;
 }
 
 /* ============================================================================
- * Batch Computation - All Graph Descriptors in Single Pass
+ * BFS-based Distance Computation
  * ============================================================================ */
 
-/* Size thresholds for expensive operations - aggressive for speed */
-#define GRAPH_SIZE_SMALL 20    /* Full computation only for tiny molecules */
-#define GRAPH_SIZE_MEDIUM 40   /* Skip expensive ops */
-#define GRAPH_SIZE_LARGE 100   /* Use approximations for everything */
+/* Compute shortest distances from a source atom to all others (heavy atoms only) */
+static void bfs_distances(const molecule_t* mol, int source, int* dist) {
+    int queue[GRAPH_MAX_ATOMS];
+    int head = 0, tail = 0;
+
+    for (int i = 0; i < mol->num_atoms; i++) {
+        dist[i] = -1;
+    }
+
+    if (mol->atoms[source].element == ELEM_H) return;
+
+    dist[source] = 0;
+    queue[tail++] = source;
+
+    while (head < tail) {
+        int curr = queue[head++];
+        const atom_t* atom = &mol->atoms[curr];
+
+        for (int i = 0; i < atom->num_neighbors; i++) {
+            int nb = atom->neighbors[i];
+            if (mol->atoms[nb].element == ELEM_H) continue;
+            if (dist[nb] < 0) {
+                dist[nb] = dist[curr] + 1;
+                queue[tail++] = nb;
+            }
+        }
+    }
+}
+
+/* Compute eccentricity (max distance to any other vertex) */
+static int compute_eccentricity(const int* dist, int n, int* sum_out) {
+    int max_dist = 0;
+    int sum = 0;
+    for (int i = 0; i < n; i++) {
+        if (dist[i] > 0) {
+            sum += dist[i];
+            if (dist[i] > max_dist) max_dist = dist[i];
+        }
+    }
+    if (sum_out) *sum_out = sum;
+    return max_dist;
+}
+
+/* ============================================================================
+ * Connected Components (using molecule's fragment finder)
+ * ============================================================================ */
+
+static int count_heavy_components(const molecule_t* mol) {
+    /* Use molecule's fragment info if available */
+    if (mol->fragment_ids && mol->num_fragments > 0) {
+        /* Count fragments that contain heavy atoms */
+        bool has_heavy[64] = {false};
+        for (int i = 0; i < mol->num_atoms && mol->num_fragments < 64; i++) {
+            if (mol->atoms[i].element != ELEM_H && mol->fragment_ids[i] >= 0) {
+                has_heavy[mol->fragment_ids[i]] = true;
+            }
+        }
+        int count = 0;
+        for (int i = 0; i < mol->num_fragments && i < 64; i++) {
+            if (has_heavy[i]) count++;
+        }
+        return count > 0 ? count : 1;
+    }
+
+    /* Fallback: BFS to count components */
+    if (mol->num_atoms > GRAPH_MAX_ATOMS) return 1;
+
+    bool visited[GRAPH_MAX_ATOMS] = {false};
+    int queue[GRAPH_MAX_ATOMS];
+    int components = 0;
+
+    for (int start = 0; start < mol->num_atoms; start++) {
+        if (mol->atoms[start].element == ELEM_H || visited[start]) continue;
+
+        components++;
+        int head = 0, tail = 0;
+        queue[tail++] = start;
+        visited[start] = true;
+
+        while (head < tail) {
+            int curr = queue[head++];
+            const atom_t* atom = &mol->atoms[curr];
+
+            for (int i = 0; i < atom->num_neighbors; i++) {
+                int nb = atom->neighbors[i];
+                if (mol->atoms[nb].element == ELEM_H || visited[nb]) continue;
+                visited[nb] = true;
+                queue[tail++] = nb;
+            }
+        }
+    }
+
+    return components > 0 ? components : 1;
+}
+
+/* ============================================================================
+ * Betweenness Centrality (Brandes Algorithm - O(VE))
+ * ============================================================================ */
+
+static void compute_betweenness(const molecule_t* mol, double* betweenness,
+                                 int* heavy_indices, int n_heavy) {
+    if (n_heavy < 2 || n_heavy > GRAPH_MAX_ATOMS) return;
+
+    memset(betweenness, 0, n_heavy * sizeof(double));
+
+    /* Temporary arrays */
+    int dist[GRAPH_MAX_ATOMS];
+    double sigma[GRAPH_MAX_ATOMS];      /* Number of shortest paths */
+    double delta[GRAPH_MAX_ATOMS];      /* Dependency */
+    int pred[GRAPH_MAX_ATOMS][16];      /* Predecessors (max 16 per node) */
+    int n_pred[GRAPH_MAX_ATOMS];
+    int queue[GRAPH_MAX_ATOMS];
+    int stack[GRAPH_MAX_ATOMS];
+
+    /* Map from atom index to heavy index */
+    int atom_to_heavy[GRAPH_MAX_ATOMS];
+    memset(atom_to_heavy, -1, sizeof(atom_to_heavy));
+    for (int i = 0; i < n_heavy; i++) {
+        atom_to_heavy[heavy_indices[i]] = i;
+    }
+
+    /* BFS from each source */
+    for (int si = 0; si < n_heavy; si++) {
+        int s = heavy_indices[si];
+
+        /* Initialize */
+        for (int i = 0; i < mol->num_atoms; i++) {
+            dist[i] = -1;
+            sigma[i] = 0.0;
+            delta[i] = 0.0;
+            n_pred[i] = 0;
+        }
+
+        dist[s] = 0;
+        sigma[s] = 1.0;
+
+        int head = 0, tail = 0, stack_top = 0;
+        queue[tail++] = s;
+
+        /* BFS */
+        while (head < tail) {
+            int v = queue[head++];
+            stack[stack_top++] = v;
+
+            const atom_t* atom = &mol->atoms[v];
+            for (int i = 0; i < atom->num_neighbors; i++) {
+                int w = atom->neighbors[i];
+                if (mol->atoms[w].element == ELEM_H) continue;
+
+                /* First visit */
+                if (dist[w] < 0) {
+                    dist[w] = dist[v] + 1;
+                    queue[tail++] = w;
+                }
+
+                /* Shortest path via v */
+                if (dist[w] == dist[v] + 1) {
+                    sigma[w] += sigma[v];
+                    if (n_pred[w] < 16) {
+                        pred[w][n_pred[w]++] = v;
+                    }
+                }
+            }
+        }
+
+        /* Accumulation (back-propagation) */
+        while (stack_top > 0) {
+            int w = stack[--stack_top];
+            for (int i = 0; i < n_pred[w]; i++) {
+                int v = pred[w][i];
+                if (sigma[w] > 0) {
+                    delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w]);
+                }
+            }
+            if (w != s) {
+                int hi = atom_to_heavy[w];
+                if (hi >= 0) {
+                    betweenness[hi] += delta[w];
+                }
+            }
+        }
+    }
+
+    /* Normalize (undirected graph: each pair counted twice) */
+    for (int i = 0; i < n_heavy; i++) {
+        betweenness[i] /= 2.0;
+    }
+}
+
+/* ============================================================================
+ * Clustering Coefficient (Triangle Counting)
+ * ============================================================================ */
+
+static double compute_global_clustering(const molecule_t* mol, int n_heavy) {
+    if (n_heavy < 3) return 0.0;
+
+    int64_t triangles = 0;
+    int64_t triplets = 0;
+
+    for (int i = 0; i < mol->num_atoms; i++) {
+        if (mol->atoms[i].element == ELEM_H) continue;
+        const atom_t* atom = &mol->atoms[i];
+
+        /* Get heavy neighbors */
+        int neighbors[16];
+        int n_neighbors = 0;
+        for (int j = 0; j < atom->num_neighbors && n_neighbors < 16; j++) {
+            int nb = atom->neighbors[j];
+            if (mol->atoms[nb].element != ELEM_H) {
+                neighbors[n_neighbors++] = nb;
+            }
+        }
+
+        /* Count triplets centered at i */
+        int k = n_neighbors;
+        if (k >= 2) {
+            triplets += (int64_t)k * (k - 1) / 2;
+        }
+
+        /* Count triangles (edges between neighbors) */
+        for (int a = 0; a < n_neighbors; a++) {
+            for (int b = a + 1; b < n_neighbors; b++) {
+                /* Check if neighbors[a] and neighbors[b] are connected */
+                const atom_t* na = &mol->atoms[neighbors[a]];
+                for (int c = 0; c < na->num_neighbors; c++) {
+                    if (na->neighbors[c] == neighbors[b]) {
+                        triangles++;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /* Each triangle counted 3 times */
+    if (triplets == 0) return 0.0;
+    return (double)(triangles / 3) / triplets * 3.0;
+}
+
+static void compute_local_clustering(const molecule_t* mol, double* local_cc, int n) {
+    for (int i = 0; i < n; i++) local_cc[i] = 0.0;
+
+    for (int i = 0; i < mol->num_atoms; i++) {
+        if (mol->atoms[i].element == ELEM_H) continue;
+        const atom_t* atom = &mol->atoms[i];
+
+        /* Get heavy neighbors */
+        int neighbors[16];
+        int k = 0;
+        for (int j = 0; j < atom->num_neighbors && k < 16; j++) {
+            int nb = atom->neighbors[j];
+            if (mol->atoms[nb].element != ELEM_H) {
+                neighbors[k++] = nb;
+            }
+        }
+
+        if (k < 2) {
+            local_cc[i] = 0.0;
+            continue;
+        }
+
+        /* Count edges between neighbors */
+        int edges = 0;
+        for (int a = 0; a < k; a++) {
+            for (int b = a + 1; b < k; b++) {
+                const atom_t* na = &mol->atoms[neighbors[a]];
+                for (int c = 0; c < na->num_neighbors; c++) {
+                    if (na->neighbors[c] == neighbors[b]) {
+                        edges++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        int possible = k * (k - 1) / 2;
+        local_cc[i] = (possible > 0) ? (double)edges / possible : 0.0;
+    }
+}
+
+/* ============================================================================
+ * Girth (Shortest Cycle) - BFS from each vertex
+ * ============================================================================ */
+
+static int compute_girth(const molecule_t* mol, int n_heavy) {
+    if (n_heavy < 3) return 0;
+
+    int min_girth = n_heavy + 1;  /* Start with impossible value */
+    int dist[GRAPH_MAX_ATOMS];
+    int parent[GRAPH_MAX_ATOMS];
+    int queue[GRAPH_MAX_ATOMS];
+
+    for (int start = 0; start < mol->num_atoms; start++) {
+        if (mol->atoms[start].element == ELEM_H) continue;
+
+        for (int i = 0; i < mol->num_atoms; i++) {
+            dist[i] = -1;
+            parent[i] = -1;
+        }
+
+        dist[start] = 0;
+        int head = 0, tail = 0;
+        queue[tail++] = start;
+
+        while (head < tail) {
+            int v = queue[head++];
+            const atom_t* atom = &mol->atoms[v];
+
+            for (int i = 0; i < atom->num_neighbors; i++) {
+                int w = atom->neighbors[i];
+                if (mol->atoms[w].element == ELEM_H) continue;
+
+                if (dist[w] < 0) {
+                    dist[w] = dist[v] + 1;
+                    parent[w] = v;
+                    queue[tail++] = w;
+                } else if (parent[v] != w && parent[w] != v) {
+                    /* Found a cycle */
+                    int cycle_len = dist[v] + dist[w] + 1;
+                    if (cycle_len < min_girth) {
+                        min_girth = cycle_len;
+                    }
+                }
+            }
+        }
+    }
+
+    return (min_girth <= n_heavy) ? min_girth : 0;
+}
+
+/* ============================================================================
+ * Batch Computation - All Graph Descriptors
+ * ============================================================================ */
 
 static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
     memset(s, 0, sizeof(graph_stats_t));
 
-    /* Ensure igraph error handler is disabled for thread safety */
-    ensure_igraph_thread_safe();
+    int n_heavy = count_heavy_atoms(mol);
+    int n_edges = count_heavy_bonds(mol);
 
-    int* atom_map = NULL;
-    int n_heavy = 0;
-    igraph_t* g = molecule_to_igraph(mol, &atom_map, &n_heavy);
-
-    if (!g || n_heavy < 2) {
+    if (n_heavy < 2 || n_heavy > GRAPH_MAX_ATOMS) {
         s->is_connected = 1;
-        s->n_vertices = mol ? mol->num_atoms : 0;
-        free_igraph(g, atom_map);
+        s->n_vertices = n_heavy;
+        s->n_components = 1;
         return;
     }
 
     s->n_vertices = n_heavy;
-    s->n_edges = (int)igraph_ecount(g);
+    s->n_edges = n_edges;
 
     /* === Basic Properties === */
-    s->density = (double)(2 * s->n_edges) / (n_heavy * (n_heavy - 1));
+    s->density = (n_heavy > 1) ? (double)(2 * n_edges) / (n_heavy * (n_heavy - 1)) : 0.0;
+    s->n_components = count_heavy_components(mol);
+    s->is_connected = (s->n_components == 1) ? 1 : 0;
 
-    /* Components - always needed */
-    igraph_vector_int_t membership;
-    igraph_vector_int_t csize;
-    igraph_integer_t n_comp;
-    igraph_vector_int_init(&membership, 0);
-    igraph_vector_int_init(&csize, 0);
-    igraph_connected_components(g, &membership, &csize, &n_comp, IGRAPH_WEAK);
-    s->n_components = (int)n_comp;
-    s->is_connected = (n_comp == 1) ? 1 : 0;
-    igraph_vector_int_destroy(&membership);
-    igraph_vector_int_destroy(&csize);
-
-    /* === Degree Statistics - compute ONCE and reuse === */
-    igraph_vector_int_t degree;
-    igraph_vector_int_init(&degree, n_heavy);
-    igraph_degree(g, &degree, igraph_vss_all(), IGRAPH_ALL, IGRAPH_NO_LOOPS);
-
+    /* === Degree Statistics === */
+    int degrees[GRAPH_MAX_ATOMS];
+    int heavy_indices[GRAPH_MAX_ATOMS];
+    int hi = 0;
     double deg_sum = 0, deg_sq_sum = 0;
     int max_deg = 0;
-    int branch_points = 0;  /* degree >= 3 */
-    int peripheral = 0;     /* degree == 1 */
+    int branch_points = 0, peripheral = 0;
 
-    for (int i = 0; i < n_heavy; i++) {
-        int d = VECTOR(degree)[i];
+    for (int i = 0; i < mol->num_atoms; i++) {
+        if (mol->atoms[i].element == ELEM_H) continue;
+
+        int d = get_heavy_degree(mol, i);
+        degrees[hi] = d;
+        heavy_indices[hi] = i;
+        hi++;
+
         deg_sum += d;
         deg_sq_sum += d * d;
         if (d > max_deg) max_deg = d;
         if (d >= 3) branch_points++;
         if (d == 1) peripheral++;
     }
+
     s->mean_degree = deg_sum / n_heavy;
     s->max_degree = max_deg;
     s->degree_variance = (deg_sq_sum / n_heavy) - (s->mean_degree * s->mean_degree);
-
-    /* ADME descriptors from degree - computed here to avoid re-calling igraph_degree */
     s->branching_index = (double)branch_points / n_heavy;
     s->peripheral_ratio = (double)peripheral / n_heavy;
-    s->core_ratio = s->branching_index;  /* Same as branching (degree >= 3) */
+    s->core_ratio = s->branching_index;
 
-    /* Keep degree vector for polar centrality later */
+    /* Degree assortativity: correlation of degrees at bond endpoints */
+    if (n_edges > 0 && n_heavy <= GRAPH_SIZE_MEDIUM) {
+        double sum_prod = 0, sum_d1 = 0, sum_d2 = 0, sum_sq1 = 0, sum_sq2 = 0;
+        int edge_count = 0;
 
-    /* Degree assortativity - skip for large graphs (expensive) */
-    if (n_heavy <= GRAPH_SIZE_MEDIUM) {
-        igraph_real_t assortativity;
-        if (igraph_assortativity_degree(g, &assortativity, IGRAPH_UNDIRECTED) == IGRAPH_SUCCESS) {
-            s->degree_assortativity = (assortativity >= -1.0 && assortativity <= 1.0) ? assortativity : 0.0;
+        for (int b = 0; b < mol->num_bonds; b++) {
+            int a1 = mol->bonds[b].atom1;
+            int a2 = mol->bonds[b].atom2;
+            if (mol->atoms[a1].element == ELEM_H || mol->atoms[a2].element == ELEM_H) continue;
+
+            int d1 = get_heavy_degree(mol, a1);
+            int d2 = get_heavy_degree(mol, a2);
+            sum_prod += d1 * d2;
+            sum_d1 += d1;
+            sum_d2 += d2;
+            sum_sq1 += d1 * d1;
+            sum_sq2 += d2 * d2;
+            edge_count++;
+        }
+
+        if (edge_count > 0) {
+            double mean1 = sum_d1 / edge_count;
+            double mean2 = sum_d2 / edge_count;
+            double var1 = sum_sq1 / edge_count - mean1 * mean1;
+            double var2 = sum_sq2 / edge_count - mean2 * mean2;
+            double cov = sum_prod / edge_count - mean1 * mean2;
+
+            if (var1 > 0 && var2 > 0) {
+                s->degree_assortativity = cov / sqrt(var1 * var2);
+            }
         }
     }
 
-    /* === Path-based Descriptors === */
-    /* Only for small connected graphs - O(n²) memory and time */
+    /* === Path-based Descriptors (BFS) === */
     if (s->is_connected && n_heavy <= GRAPH_SIZE_MEDIUM) {
-        /* Eccentricities first (needed for diameter/radius) */
-        igraph_vector_t ecc;
-        igraph_vector_init(&ecc, n_heavy);
-#if IGRAPH_API_V1
-        /* igraph 1.0+ API: (graph, weights, res, vids, mode) */
-        igraph_eccentricity(g, NULL, &ecc, igraph_vss_all(), IGRAPH_ALL);
-#else
-        /* igraph 0.10.x API: (graph, res, vids, mode) */
-        igraph_eccentricity(g, &ecc, igraph_vss_all(), IGRAPH_ALL);
-#endif
+        int dist[GRAPH_MAX_ATOMS];
+        double ecc_sum = 0;
+        int ecc_max = 0, ecc_min = n_heavy;
+        double path_sum = 0;
+        int path_count = 0;
 
-        double ecc_sum = 0, ecc_max = 0, ecc_min = LARGE_DIST;
         for (int i = 0; i < n_heavy; i++) {
-            double e = VECTOR(ecc)[i];
-            if (e < LARGE_DIST) {
-                ecc_sum += e;
-                if (e > ecc_max) ecc_max = e;
-                if (e < ecc_min) ecc_min = e;
+            int src = heavy_indices[i];
+            bfs_distances(mol, src, dist);
+
+            int dist_sum;
+            int ecc = compute_eccentricity(dist, mol->num_atoms, &dist_sum);
+
+            ecc_sum += ecc;
+            if (ecc > ecc_max) ecc_max = ecc;
+            if (ecc < ecc_min && ecc > 0) ecc_min = ecc;
+
+            path_sum += dist_sum;
+            for (int j = 0; j < mol->num_atoms; j++) {
+                if (dist[j] > 0) path_count++;
             }
         }
+
         s->diameter = ecc_max;
-        s->radius = (ecc_min >= LARGE_DIST) ? 0 : ecc_min;
+        s->radius = (ecc_min < n_heavy) ? ecc_min : 0;
         s->mean_eccentricity = ecc_sum / n_heavy;
-        igraph_vector_destroy(&ecc);
-
-        /* Wiener index - only for small graphs */
-        if (n_heavy <= GRAPH_SIZE_SMALL) {
-            igraph_matrix_t distances;
-            igraph_matrix_init(&distances, n_heavy, n_heavy);
-#if IGRAPH_API_V1
-            /* igraph 1.0+ API: (graph, weights, res, from, to, mode) */
-            igraph_distances(g, NULL, &distances, igraph_vss_all(), igraph_vss_all(), IGRAPH_ALL);
-#else
-            /* igraph 0.10.x API: (graph, res, from, to, mode) */
-            igraph_distances(g, &distances, igraph_vss_all(), igraph_vss_all(), IGRAPH_ALL);
-#endif
-
-            double path_sum = 0;
-            int path_count = 0;
-            for (int i = 0; i < n_heavy; i++) {
-                for (int j = i + 1; j < n_heavy; j++) {
-                    double d = MATRIX(distances, i, j);
-                    if (d < LARGE_DIST) {
-                        path_sum += d;
-                        path_count++;
-                    }
-                }
-            }
-            s->wiener_index = path_sum;
-            s->mean_path_length = path_count > 0 ? path_sum / path_count : 0;
-            igraph_matrix_destroy(&distances);
-        } else {
-            /* Approximate Wiener index for medium graphs */
-            s->wiener_index = s->mean_eccentricity * n_heavy * (n_heavy - 1) / 4.0;
-            s->mean_path_length = s->mean_eccentricity / 2.0;
-        }
+        s->wiener_index = path_sum / 2;  /* Each pair counted twice */
+        s->mean_path_length = (path_count > 0) ? path_sum / path_count : 0;
     } else if (s->is_connected) {
-        /* Approximation for large connected graphs */
-        /* Diameter approximation: ~log(n) for typical molecular graphs */
+        /* Approximations for large graphs */
         s->diameter = 2.0 + log((double)n_heavy) / log(s->mean_degree + 1);
         s->radius = s->diameter / 2.0;
         s->mean_eccentricity = (s->diameter + s->radius) / 2.0;
@@ -334,164 +589,105 @@ static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
     }
 
     /* === Centrality Measures === */
-    /* Betweenness is O(n*m) - very expensive, only for small graphs */
     if (n_heavy <= GRAPH_SIZE_SMALL) {
-        igraph_vector_t betweenness;
-        igraph_vector_init(&betweenness, n_heavy);
-#if IGRAPH_API_V1
-        /* igraph 1.0+ API: (graph, weights, res, vids, directed, normalized) */
-        igraph_betweenness(g, NULL, &betweenness, igraph_vss_all(), false, false);
-#else
-        /* igraph 0.10.x API: (graph, res, vids, directed, weights) */
-        igraph_betweenness(g, &betweenness, igraph_vss_all(), false, NULL);
-#endif
+        double betweenness[GRAPH_MAX_ATOMS];
+        compute_betweenness(mol, betweenness, heavy_indices, n_heavy);
 
         double bw_sum = 0, bw_max = 0;
-        for (int i = 0; i < n_heavy; i++) {
-            double b = VECTOR(betweenness)[i];
-            bw_sum += b;
-            if (b > bw_max) bw_max = b;
-        }
-        s->mean_betweenness = bw_sum / n_heavy;
-        s->max_betweenness = bw_max;
-
-        /* Polar centrality - betweenness of heteroatoms */
         double polar_bw_sum = 0;
         int polar_count = 0;
-        for (int i = 0; i < mol->num_atoms; i++) {
-            if (atom_map[i] >= 0) {
-                element_t elem = mol->atoms[i].element;
-                if (elem == ELEM_N || elem == ELEM_O || elem == ELEM_S ||
-                    elem == ELEM_P || elem == ELEM_F || elem == ELEM_Cl ||
-                    elem == ELEM_Br || elem == ELEM_I) {
-                    polar_bw_sum += VECTOR(betweenness)[atom_map[i]];
-                    polar_count++;
-                }
+
+        for (int i = 0; i < n_heavy; i++) {
+            bw_sum += betweenness[i];
+            if (betweenness[i] > bw_max) bw_max = betweenness[i];
+
+            int atom_idx = heavy_indices[i];
+            if (is_polar_heavy(mol->atoms[atom_idx].element)) {
+                polar_bw_sum += betweenness[i];
+                polar_count++;
             }
         }
-        s->polar_centrality = polar_count > 0 ? polar_bw_sum / polar_count : 0;
-        igraph_vector_destroy(&betweenness);
+
+        s->mean_betweenness = bw_sum / n_heavy;
+        s->max_betweenness = bw_max;
+        s->polar_centrality = (polar_count > 0) ? polar_bw_sum / polar_count : 0;
+
+        /* Closeness: 1 / mean_distance */
+        if (s->mean_path_length > 0) {
+            s->mean_closeness = 1.0 / s->mean_path_length;
+        }
     } else {
-        /* Degree-based betweenness approximation for larger graphs */
-        /* High-degree nodes typically have higher betweenness */
+        /* Approximations */
         s->max_betweenness = (n_heavy - 1) * (n_heavy - 2) * s->max_degree / (2.0 * s->mean_degree * n_heavy);
         s->mean_betweenness = s->max_betweenness * s->mean_degree / s->max_degree;
+        s->mean_closeness = (s->mean_path_length > 0) ? 1.0 / s->mean_path_length : 0;
 
-        /* Polar centrality approximation based on degree of heteroatoms */
+        /* Polar centrality approximation */
         double polar_deg_sum = 0;
         int polar_count = 0;
         for (int i = 0; i < mol->num_atoms; i++) {
-            if (atom_map[i] >= 0) {
-                element_t elem = mol->atoms[i].element;
-                if (elem == ELEM_N || elem == ELEM_O || elem == ELEM_S ||
-                    elem == ELEM_P || elem == ELEM_F || elem == ELEM_Cl ||
-                    elem == ELEM_Br || elem == ELEM_I) {
-                    polar_deg_sum += VECTOR(degree)[atom_map[i]];
-                    polar_count++;
-                }
+            if (is_polar_heavy(mol->atoms[i].element)) {
+                polar_deg_sum += get_heavy_degree(mol, i);
+                polar_count++;
             }
         }
-        double polar_mean_deg = polar_count > 0 ? polar_deg_sum / polar_count : 0;
-        s->polar_centrality = s->mean_betweenness * polar_mean_deg / s->mean_degree;
+        double polar_mean_deg = (polar_count > 0) ? polar_deg_sum / polar_count : 0;
+        s->polar_centrality = s->mean_betweenness * polar_mean_deg / (s->mean_degree + 0.001);
     }
 
-    /* Now we can free degree vector */
-    igraph_vector_int_destroy(&degree);
-
-    /* Closeness - only for small connected graphs */
-    if (s->is_connected && n_heavy <= GRAPH_SIZE_SMALL) {
-        igraph_vector_t closeness;
-        igraph_vector_init(&closeness, n_heavy);
-        igraph_closeness(g, &closeness, NULL, NULL, igraph_vss_all(), IGRAPH_ALL, NULL, true);
-
-        double cl_sum = 0;
-        for (int i = 0; i < n_heavy; i++) {
-            double c = VECTOR(closeness)[i];
-            if (c >= 0 && c < LARGE_DIST) cl_sum += c;
-        }
-        s->mean_closeness = cl_sum / n_heavy;
-        igraph_vector_destroy(&closeness);
-    } else if (s->is_connected) {
-        /* Closeness approximation: 1 / mean_path_length */
-        s->mean_closeness = s->mean_path_length > 0 ? 1.0 / s->mean_path_length : 0;
-    }
-
-    /* Max eigenvector centrality - always use degree-based approximation */
-    s->max_eigenvector_centrality = s->n_edges > 0 ? s->max_degree / sqrt(2.0 * s->n_edges) : 0;
+    /* Max eigenvector centrality approximation */
+    s->max_eigenvector_centrality = (n_edges > 0) ? s->max_degree / sqrt(2.0 * n_edges) : 0;
 
     /* === Clustering === */
-    /* Global transitivity - fast O(m) operation */
-    igraph_real_t transitivity;
-    igraph_transitivity_undirected(g, &transitivity, IGRAPH_TRANSITIVITY_ZERO);
-    s->global_clustering = (transitivity >= 0.0 && transitivity <= 1.0) ? transitivity : 0.0;
+    s->global_clustering = compute_global_clustering(mol, n_heavy);
     s->transitivity = s->global_clustering;
 
-    /* Local clustering - only for smaller graphs */
     if (n_heavy <= GRAPH_SIZE_MEDIUM) {
-        igraph_vector_t local_clustering;
-        igraph_vector_init(&local_clustering, n_heavy);
-        igraph_transitivity_local_undirected(g, &local_clustering, igraph_vss_all(), IGRAPH_TRANSITIVITY_ZERO);
+        double local_cc[GRAPH_MAX_ATOMS];
+        compute_local_clustering(mol, local_cc, mol->num_atoms);
 
         double lc_sum = 0;
-        for (int i = 0; i < n_heavy; i++) {
-            double lc = VECTOR(local_clustering)[i];
-            if (lc >= 0.0 && lc <= 1.0) lc_sum += lc;
+        int lc_count = 0;
+        for (int i = 0; i < mol->num_atoms; i++) {
+            if (mol->atoms[i].element == ELEM_H) continue;
+            lc_sum += local_cc[i];
+            lc_count++;
         }
-        s->mean_local_clustering = lc_sum / n_heavy;
-        igraph_vector_destroy(&local_clustering);
+        s->mean_local_clustering = (lc_count > 0) ? lc_sum / lc_count : 0;
     } else {
-        /* Approximate from global clustering */
         s->mean_local_clustering = s->global_clustering;
     }
 
-    /* === Spectral Properties - degree-based approximations (fast) === */
+    /* === Spectral Properties (degree-based approximations) === */
     s->spectral_radius = sqrt(s->max_degree * s->mean_degree);
-
+    s->graph_energy = sqrt(2.0 * n_edges * n_heavy);
     if (s->is_connected && s->diameter > 0) {
         s->algebraic_connectivity = 4.0 / (n_heavy * s->diameter);
     }
 
-    s->graph_energy = sqrt(2.0 * s->n_edges * n_heavy);
-
     /* === Structural Properties === */
-    s->cyclomatic_number = s->n_edges - n_heavy + s->n_components;
+    s->cyclomatic_number = n_edges - n_heavy + s->n_components;
 
-    /* Girth - only for small graphs (can be expensive for dense graphs) */
     if (n_heavy <= GRAPH_SIZE_SMALL && s->cyclomatic_number > 0) {
-        igraph_real_t girth_val;
-        if (igraph_girth(g, &girth_val, NULL) == IGRAPH_SUCCESS && girth_val > 0) {
-            s->girth = (int)girth_val;
-        }
+        s->girth = compute_girth(mol, n_heavy);
     } else if (s->cyclomatic_number > 0) {
-        /* Approximate: most drug-like molecules have 5/6-membered rings */
-        s->girth = 5;
+        s->girth = 5;  /* Typical for drug-like molecules */
     }
 
-    /* Vertex and edge connectivity - expensive, skip for large graphs */
-    if (s->is_connected && n_heavy >= 2 && n_heavy <= GRAPH_SIZE_SMALL) {
-        igraph_integer_t vconn, econn;
-        igraph_vertex_connectivity(g, &vconn, true);
-        igraph_edge_connectivity(g, &econn, true);
-        s->vertex_connectivity = (double)vconn;
-        s->edge_connectivity = (double)econn;
-    } else if (s->is_connected) {
-        /* Approximate: minimum degree is a lower bound */
-        /* For typical molecules, connectivity ~ 1-2 */
-        s->vertex_connectivity = s->peripheral_ratio > 0.3 ? 1.0 : 2.0;
+    /* Vertex/edge connectivity approximation */
+    if (s->is_connected) {
+        s->vertex_connectivity = (s->peripheral_ratio > 0.3) ? 1.0 : 2.0;
         s->edge_connectivity = s->vertex_connectivity;
     }
 
-    /* === ADME-Specific Descriptors === */
-    /* Aromatic connectivity */
+    /* === ADME-Specific === */
     int aromatic_count = 0;
     for (int i = 0; i < mol->num_atoms; i++) {
-        if (atom_map[i] >= 0 && mol->atoms[i].aromatic) {
+        if (mol->atoms[i].element != ELEM_H && mol->atoms[i].aromatic) {
             aromatic_count++;
         }
     }
-    s->aromatic_connectivity = (double)aromatic_count / n_heavy;
-
-    free_igraph(g, atom_map);
+    s->aromatic_connectivity = (n_heavy > 0) ? (double)aromatic_count / n_heavy : 0;
 }
 
 /* ============================================================================
@@ -549,22 +745,31 @@ int descriptors_compute_graph_all(const molecule_t* mol, descriptor_value_t* val
     values[idx++].d = s.vertex_connectivity;        /* VertexConnectivity */
     values[idx++].d = s.edge_connectivity;          /* EdgeConnectivity */
 
-    /* ADME-specific (30) - we already have 29, need one more */
+    /* ADME-specific (30) */
     values[idx++].d = s.branching_index;            /* BranchingIndex */
 
     return idx;
 }
 
 /* ============================================================================
- * Individual Descriptor Functions
+ * Individual Descriptor Functions (with caching)
  * ============================================================================ */
 
-#define GRAPH_DESC_FN(name, stat_idx) \
+static _Thread_local const molecule_t* graph_cached_mol = NULL;
+static _Thread_local descriptor_value_t graph_cached_values[NUM_GRAPH_DESCRIPTORS];
+
+static inline void ensure_graph_computed(const molecule_t* mol) {
+    if (graph_cached_mol != mol) {
+        descriptors_compute_graph_all(mol, graph_cached_values);
+        graph_cached_mol = mol;
+    }
+}
+
+#define GRAPH_DESC_FN(name, idx) \
 static cchem_status_t desc_##name(const molecule_t* mol, descriptor_value_t* value) { \
-    descriptor_value_t vals[NUM_GRAPH_DESCRIPTORS]; \
-    int n = descriptors_compute_graph_all(mol, vals); \
-    if (n < 0 || stat_idx >= n) return CCHEM_ERROR_INVALID_INPUT; \
-    *value = vals[stat_idx]; \
+    if (!mol || !value) return CCHEM_ERROR_INVALID_INPUT; \
+    ensure_graph_computed(mol); \
+    *value = graph_cached_values[idx]; \
     return CCHEM_OK; \
 }
 

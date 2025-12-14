@@ -56,13 +56,11 @@ endif()
 find_package(Threads REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(IGRAPH REQUIRED igraph)
 pkg_check_modules(CAIRO REQUIRED cairo)
 
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${JPEG_INCLUDE_DIR})
-include_directories(${IGRAPH_INCLUDE_DIRS})
 include_directories(${CAIRO_INCLUDE_DIRS})
 
 # Library sources
@@ -127,13 +125,12 @@ set(CCHEM_SOURCES
 
 # Create static library
 add_library(cchem_lib STATIC ${CCHEM_SOURCES})
-target_link_libraries(cchem_lib PRIVATE Threads::Threads m ${JPEG_LIBRARIES} ${IGRAPH_LIBRARIES} ${CAIRO_LIBRARIES})
-target_link_directories(cchem_lib PRIVATE ${IGRAPH_LIBRARY_DIRS} ${CAIRO_LIBRARY_DIRS})
+target_link_libraries(cchem_lib PRIVATE Threads::Threads m ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
+target_link_directories(cchem_lib PRIVATE ${CAIRO_LIBRARY_DIRS})
 
 # Main executable
 add_executable(cchem src/main.c)
-target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads m ${JPEG_LIBRARIES} ${IGRAPH_LIBRARIES} ${CAIRO_LIBRARIES})
-target_link_directories(cchem PRIVATE ${IGRAPH_LIBRARY_DIRS})
+target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads m ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
 
 # Tests
 enable_testing()
