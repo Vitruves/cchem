@@ -14,6 +14,19 @@
 /* Global registry instance */
 descriptor_registry_t g_descriptor_registry = {0};
 
+/* Global cache generation counter - incremented each time a new molecule is parsed */
+static _Thread_local uint64_t g_cache_generation = 0;
+
+/* Get current cache generation */
+uint64_t descriptor_cache_generation(void) {
+    return g_cache_generation;
+}
+
+/* Increment cache generation (called before computing descriptors on new molecule) */
+static void descriptor_cache_invalidate(void) {
+    g_cache_generation++;
+}
+
 /* ============================================================================
  * Internal Helpers
  * ============================================================================ */
@@ -124,6 +137,13 @@ void descriptors_init(void) {
     descriptors_register_estate_sums();
     descriptors_register_eta();
     descriptors_register_ringcomplexity();
+    descriptors_register_cpsa();
+    descriptors_register_bcut_ext();
+    descriptors_register_moments();
+    descriptors_register_aromatic();
+    descriptors_register_atompairs_ext();
+    descriptors_register_framework();
+    descriptors_register_constitutional();
 }
 
 void descriptors_cleanup(void) {
@@ -275,6 +295,9 @@ cchem_status_t descriptor_compute_from_smiles(const char* smiles,
     if (!mol) {
         return CCHEM_ERROR_PARSE;
     }
+
+    /* Invalidate descriptor caches for new molecule */
+    descriptor_cache_invalidate();
 
     /* Compute descriptor */
     cchem_status_t status = descriptor_compute(mol, name, value);

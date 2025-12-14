@@ -169,6 +169,17 @@ int descriptor_count(void);
 void descriptor_list_all(void);
 
 /* ============================================================================
+ * Cache Management
+ * ============================================================================ */
+
+/**
+ * Get current cache generation counter
+ * Used by descriptor modules to detect when caches should be invalidated
+ * @return Current cache generation number
+ */
+uint64_t descriptor_cache_generation(void);
+
+/* ============================================================================
  * Descriptor Computation
  * ============================================================================ */
 
@@ -607,5 +618,71 @@ void descriptors_register_eta(void);
  * - 18 descriptors
  */
 void descriptors_register_ringcomplexity(void);
+
+/**
+ * Register CPSA descriptors (from cpsa.c)
+ * - Charged partial surface area
+ * - H-bond surface area
+ * - Lipophilicity surface area
+ * - Polarizability/EN surface area
+ * - IP/EA surface area
+ * - 70 descriptors
+ */
+void descriptors_register_cpsa(void);
+
+/**
+ * Register Extended BCUT descriptors (from bcut_ext.c)
+ * - Electron affinity, covalent radius, valence electrons
+ * - VdW volume, oxidation state, lone pairs
+ * - Aromatic flag, ring count
+ * - 48 descriptors
+ */
+void descriptors_register_bcut_ext(void);
+
+/**
+ * Register Property Moment descriptors (from moments.c)
+ * - Statistical moments for 7 atomic properties
+ * - Skewness, kurtosis, median, IQR, entropy, Gini
+ * - 42 descriptors
+ */
+void descriptors_register_moments(void);
+
+/**
+ * Register Aromatic Pattern descriptors (from aromatic.c)
+ * - Ring classification (benzene, pyridine, fused systems, etc.)
+ * - Aromatic density and distribution
+ * - Aromatic electronic properties
+ * - Aromatic topology
+ * - 64 descriptors
+ */
+void descriptors_register_aromatic(void);
+
+/**
+ * Register Extended Atom Pair descriptors (from atompairs_ext.c)
+ * - Aromatic-aliphatic pairs at various distances
+ * - Degree-based pairs (terminal, branch, core)
+ * - Charge-based pairs
+ * - Ring-based pairs
+ * - 56 descriptors
+ */
+void descriptors_register_atompairs_ext(void);
+
+/**
+ * Register Framework Topology descriptors (from framework.c)
+ * - Ring system topology
+ * - Chain/linker analysis
+ * - Scaffold metrics
+ * - 40 descriptors
+ */
+void descriptors_register_framework(void);
+
+/**
+ * Register Constitutional Extension descriptors (from constitutional.c)
+ * - Element combination counts
+ * - Bond environment counts
+ * - Hybrid counts
+ * - 34 descriptors
+ */
+void descriptors_register_constitutional(void);
 
 #endif /* CCHEM_DESCRIPTORS_H */

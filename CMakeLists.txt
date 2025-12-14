@@ -111,6 +111,13 @@ set(CCHEM_SOURCES
     src/descriptors/estate_sums.c
     src/descriptors/eta.c
     src/descriptors/ringcomplexity.c
+    src/descriptors/cpsa.c
+    src/descriptors/bcut_ext.c
+    src/descriptors/moments.c
+    src/descriptors/aromatic.c
+    src/descriptors/atompairs_ext.c
+    src/descriptors/framework.c
+    src/descriptors/constitutional.c
     src/depictor/types.c
     src/depictor/colors.c
     src/depictor/coords2d.c
@@ -164,6 +171,10 @@ target_link_libraries(test_debug PRIVATE cchem_lib m)
 add_executable(test_descriptors tests/test_descriptors.c)
 target_link_libraries(test_descriptors PRIVATE cchem_lib m)
 add_test(NAME test_descriptors COMMAND test_descriptors)
+
+add_executable(test_descriptors_extended tests/test_descriptors_extended.c)
+target_link_libraries(test_descriptors_extended PRIVATE cchem_lib m)
+add_test(NAME test_descriptors_extended COMMAND test_descriptors_extended)
 
 add_executable(test_mmff94 tests/test_mmff94.c)
 target_link_libraries(test_mmff94 PRIVATE cchem_lib m)
