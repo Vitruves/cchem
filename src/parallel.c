@@ -211,6 +211,29 @@ int thread_pool_num_completed(thread_pool_t* pool) {
     return completed;
 }
 
+void thread_pool_clear_completed(thread_pool_t* pool) {
+    if (!pool) return;
+
+    pthread_mutex_lock(&pool->mutex);
+
+    /* Wait for all current tasks to complete first */
+    while (pool->completed_tasks < pool->num_tasks) {
+        pthread_cond_wait(&pool->task_completed, &pool->mutex);
+    }
+
+    /* Reset task queue counters for reuse (keeps allocated memory) */
+    pool->num_tasks = 0;
+    pool->next_task = 0;
+    pool->completed_tasks = 0;
+
+    /* Zero out the task array to clear old results */
+    if (pool->tasks && pool->tasks_capacity > 0) {
+        memset(pool->tasks, 0, pool->tasks_capacity * sizeof(*pool->tasks));
+    }
+
+    pthread_mutex_unlock(&pool->mutex);
+}
+
 /* Batch processing types */
 typedef struct {
     int row_idx;

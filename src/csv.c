@@ -848,3 +848,281 @@ const char* csv_mmap_reader_get_error(const csv_mmap_reader_t* reader) {
     if (!reader) return "NULL reader";
     return reader->error_msg;
 }
+
+/* ============================================================================
+ * Bulk CSV Writer Implementation
+ * ============================================================================ */
+
+FILE* csv_writer_get_file(csv_writer_t* writer) {
+    return writer ? writer->file : NULL;
+}
+
+csv_bulk_writer_t* csv_bulk_writer_create(int num_rows, size_t avg_line_size) {
+    if (num_rows <= 0) return NULL;
+
+    csv_bulk_writer_t* bulk = (csv_bulk_writer_t*)calloc(1, sizeof(csv_bulk_writer_t));
+    if (!bulk) return NULL;
+
+    bulk->lines = (csv_line_buffer_t*)calloc(num_rows, sizeof(csv_line_buffer_t));
+    if (!bulk->lines) {
+        free(bulk);
+        return NULL;
+    }
+
+    bulk->num_lines = num_rows;
+    bulk->delimiter = ',';
+    bulk->quote_char = '"';
+
+    /* Pre-allocate each line buffer */
+    size_t initial_cap = (avg_line_size > 0) ? avg_line_size : 1024;
+    for (int i = 0; i < num_rows; i++) {
+        bulk->lines[i].data = (char*)malloc(initial_cap);
+        if (!bulk->lines[i].data) {
+            /* Cleanup on failure */
+            for (int j = 0; j < i; j++) {
+                free(bulk->lines[j].data);
+            }
+            free(bulk->lines);
+            free(bulk);
+            return NULL;
+        }
+        bulk->lines[i].capacity = initial_cap;
+        bulk->lines[i].len = 0;
+    }
+
+    return bulk;
+}
+
+void csv_bulk_writer_free(csv_bulk_writer_t* bulk) {
+    if (!bulk) return;
+
+    if (bulk->lines) {
+        for (int i = 0; i < bulk->num_lines; i++) {
+            if (bulk->lines[i].data) {
+                free(bulk->lines[i].data);
+            }
+        }
+        free(bulk->lines);
+    }
+    free(bulk);
+}
+
+/* Thread-safe row formatting into pre-allocated buffer */
+csv_status_t csv_bulk_format_row(csv_bulk_writer_t* bulk, int row_idx,
+                                  const char** fields, int num_fields) {
+    if (!bulk || row_idx < 0 || row_idx >= bulk->num_lines || !fields) {
+        return CSV_ERROR_INVALID;
+    }
+
+    csv_line_buffer_t* line = &bulk->lines[row_idx];
+
+    /* Calculate required size */
+    size_t needed = 0;
+    for (int i = 0; i < num_fields; i++) {
+        const char* field = fields[i] ? fields[i] : "";
+        size_t flen = strlen(field);
+        needed += flen + 3;  /* field + possible quotes + delimiter */
+
+        /* Check if quoting needed */
+        for (const char* p = field; *p; p++) {
+            if (*p == bulk->quote_char) needed++;  /* Escaped quotes */
+        }
+    }
+    needed += 2;  /* newline + null terminator */
+
+    /* Ensure capacity */
+    if (needed > line->capacity) {
+        size_t new_cap = needed * 2;
+        char* new_data = (char*)realloc(line->data, new_cap);
+        if (!new_data) return CSV_ERROR_MEMORY;
+        line->data = new_data;
+        line->capacity = new_cap;
+    }
+
+    /* Format row */
+    char* p = line->data;
+    char* end = line->data + line->capacity - 2;
+
+    for (int i = 0; i < num_fields; i++) {
+        if (i > 0 && p < end) {
+            *p++ = bulk->delimiter;
+        }
+
+        const char* field = fields[i] ? fields[i] : "";
+
+        /* Fast path: check if numeric (no quoting needed) */
+        char first = *field;
+        bool maybe_numeric = (first == '-' || first == '+' ||
+                              (first >= '0' && first <= '9') ||
+                              first == '.' || first == '\0');
+
+        if (maybe_numeric) {
+            /* Fast copy for numeric/empty fields */
+            while (*field && p < end) {
+                *p++ = *field++;
+            }
+        } else {
+            /* Check if quoting needed */
+            bool needs_quote = false;
+            for (const char* f = field; *f; f++) {
+                if (*f == bulk->delimiter || *f == '"' || *f == '\n' || *f == '\r') {
+                    needs_quote = true;
+                    break;
+                }
+            }
+
+            if (needs_quote) {
+                if (p < end) *p++ = bulk->quote_char;
+                for (const char* f = field; *f && p < end; f++) {
+                    if (*f == bulk->quote_char && p < end - 1) {
+                        *p++ = bulk->quote_char;
+                    }
+                    *p++ = *f;
+                }
+                if (p < end) *p++ = bulk->quote_char;
+            } else {
+                while (*field && p < end) {
+                    *p++ = *field++;
+                }
+            }
+        }
+    }
+
+    *p++ = '\n';
+    line->len = p - line->data;
+
+    return CSV_OK;
+}
+
+/* Bulk write all formatted lines to file */
+csv_status_t csv_bulk_write_all(csv_bulk_writer_t* bulk, FILE* file) {
+    if (!bulk || !file) return CSV_ERROR_INVALID;
+
+    /* Calculate total size for potential single write */
+    size_t total_size = 0;
+    for (int i = 0; i < bulk->num_lines; i++) {
+        total_size += bulk->lines[i].len;
+    }
+
+    /* For large datasets, use chunked writing to avoid memory issues */
+    const size_t CHUNK_SIZE = 64 * 1024 * 1024;  /* 64MB chunks */
+
+    if (total_size < CHUNK_SIZE) {
+        /* Small enough - allocate single buffer and write once */
+        char* buffer = (char*)malloc(total_size);
+        if (buffer) {
+            char* p = buffer;
+            for (int i = 0; i < bulk->num_lines; i++) {
+                memcpy(p, bulk->lines[i].data, bulk->lines[i].len);
+                p += bulk->lines[i].len;
+            }
+            size_t written = fwrite(buffer, 1, total_size, file);
+            free(buffer);
+            if (written != total_size) return CSV_ERROR_IO;
+            return CSV_OK;
+        }
+        /* Fall through to chunked write if malloc fails */
+    }
+
+    /* Chunked writing for large files or if buffer allocation failed */
+    char* chunk = (char*)malloc(CHUNK_SIZE);
+    if (!chunk) {
+        /* Last resort: write line by line */
+        for (int i = 0; i < bulk->num_lines; i++) {
+            if (fwrite(bulk->lines[i].data, 1, bulk->lines[i].len, file) != bulk->lines[i].len) {
+                return CSV_ERROR_IO;
+            }
+        }
+        return CSV_OK;
+    }
+
+    size_t chunk_pos = 0;
+    for (int i = 0; i < bulk->num_lines; i++) {
+        size_t line_len = bulk->lines[i].len;
+
+        /* If line doesn't fit in remaining chunk, flush */
+        if (chunk_pos + line_len > CHUNK_SIZE) {
+            if (chunk_pos > 0) {
+                if (fwrite(chunk, 1, chunk_pos, file) != chunk_pos) {
+                    free(chunk);
+                    return CSV_ERROR_IO;
+                }
+                chunk_pos = 0;
+            }
+
+            /* If single line > chunk size, write directly */
+            if (line_len > CHUNK_SIZE) {
+                if (fwrite(bulk->lines[i].data, 1, line_len, file) != line_len) {
+                    free(chunk);
+                    return CSV_ERROR_IO;
+                }
+                continue;
+            }
+        }
+
+        memcpy(chunk + chunk_pos, bulk->lines[i].data, line_len);
+        chunk_pos += line_len;
+    }
+
+    /* Flush remaining chunk */
+    if (chunk_pos > 0) {
+        if (fwrite(chunk, 1, chunk_pos, file) != chunk_pos) {
+            free(chunk);
+            return CSV_ERROR_IO;
+        }
+    }
+
+    free(chunk);
+    return CSV_OK;
+}
+
+/* Write header line directly to file */
+csv_status_t csv_write_header_line(FILE* file, const char** fields,
+                                    int num_fields, char delimiter) {
+    if (!file || !fields || num_fields <= 0) return CSV_ERROR_INVALID;
+
+    char line_buf[65536];
+    char* p = line_buf;
+    char* end = line_buf + sizeof(line_buf) - 2;
+
+    for (int i = 0; i < num_fields; i++) {
+        if (i > 0 && p < end) {
+            *p++ = delimiter;
+        }
+
+        const char* field = fields[i] ? fields[i] : "";
+
+        /* Check if quoting needed */
+        bool needs_quote = false;
+        for (const char* f = field; *f; f++) {
+            if (*f == delimiter || *f == '"' || *f == '\n' || *f == '\r') {
+                needs_quote = true;
+                break;
+            }
+        }
+
+        if (needs_quote) {
+            if (p < end) *p++ = '"';
+            for (const char* f = field; *f && p < end; f++) {
+                if (*f == '"' && p < end - 1) {
+                    *p++ = '"';
+                }
+                *p++ = *f;
+            }
+            if (p < end) *p++ = '"';
+        } else {
+            while (*field && p < end) {
+                *p++ = *field++;
+            }
+        }
+    }
+
+    *p++ = '\n';
+    size_t len = p - line_buf;
+
+    if (fwrite(line_buf, 1, len, file) != len) {
+        return CSV_ERROR_IO;
+    }
+
+    return CSV_OK;
+}

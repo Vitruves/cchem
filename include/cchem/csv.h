@@ -125,6 +125,58 @@ csv_status_t csv_writer_write_fields(csv_writer_t* writer,
 /* Get error message */
 const char* csv_writer_get_error(const csv_writer_t* writer);
 
+/* Get underlying file handle for bulk operations */
+FILE* csv_writer_get_file(csv_writer_t* writer);
+
+/* ============================================================================
+ * Bulk CSV Writer (High Performance Parallel Writing)
+ *
+ * Pre-formats rows in parallel using thread pool, then writes in bulk.
+ * Ideal for large datasets with many columns (e.g., descriptor computation).
+ * ============================================================================ */
+
+/* Pre-allocated line buffer for a single row */
+typedef struct {
+    char* data;          /* Formatted CSV line (including newline) */
+    size_t len;          /* Length of data */
+    size_t capacity;     /* Allocated capacity */
+} csv_line_buffer_t;
+
+/* Bulk writer context for parallel formatting + sequential writing */
+typedef struct {
+    csv_line_buffer_t* lines;  /* Array of line buffers */
+    int num_lines;             /* Number of lines */
+    char delimiter;
+    char quote_char;
+} csv_bulk_writer_t;
+
+/* Create bulk writer with pre-allocated line buffers
+ * num_rows: number of data rows (excluding header)
+ * avg_line_size: estimated average line size for pre-allocation
+ */
+csv_bulk_writer_t* csv_bulk_writer_create(int num_rows, size_t avg_line_size);
+
+/* Free bulk writer and all line buffers */
+void csv_bulk_writer_free(csv_bulk_writer_t* bulk);
+
+/* Format a single row into a line buffer (thread-safe, for parallel use)
+ * row_idx: which line buffer to write to
+ * fields: array of field values
+ * num_fields: number of fields
+ * Returns CSV_OK on success
+ */
+csv_status_t csv_bulk_format_row(csv_bulk_writer_t* bulk, int row_idx,
+                                  const char** fields, int num_fields);
+
+/* Write all formatted lines to file in bulk
+ * Uses writev() or large fwrite() for efficiency
+ */
+csv_status_t csv_bulk_write_all(csv_bulk_writer_t* bulk, FILE* file);
+
+/* Write a single pre-formatted header line (not from bulk buffers) */
+csv_status_t csv_write_header_line(FILE* file, const char** fields,
+                                    int num_fields, char delimiter);
+
 /* Utility: count rows in file */
 int csv_count_rows(const char* filename);
 

@@ -546,6 +546,14 @@ typedef struct {
     bool success;
 } desc_task_result_t;
 
+/* Task argument for parallel CSV row formatting */
+typedef struct {
+    int row_idx;
+    csv_bulk_writer_t* bulk;       /* Shared bulk writer (thread-safe per-row writes) */
+    const char** fields;           /* Array of field pointers for this row */
+    int num_fields;
+} csv_format_task_t;
+
 /* Get pointer to i-th value in result buffer */
 static inline char* result_value_ptr(desc_task_result_t* r, int i) {
     return r->buffer + (i * DESC_VALUE_WIDTH);
@@ -761,6 +769,16 @@ static void* desc_batch_worker(void* arg) {
 
     /* Note: mol points to tl_mol, do NOT free - it's reused */
     return result;
+}
+
+/* Worker function for parallel CSV row formatting */
+static void* csv_format_worker(void* arg) {
+    csv_format_task_t* task = (csv_format_task_t*)arg;
+
+    csv_bulk_format_row(task->bulk, task->row_idx, task->fields, task->num_fields);
+
+    /* Return task pointer as result (for cleanup tracking) */
+    return task;
 }
 
 /* Compute command */
@@ -1026,11 +1044,29 @@ static int cmd_compute(int argc, char* argv[]) {
         progress_finish(progress);
         progress_free(progress);
 
-        /* Create output writer */
-        csv_writer_t* writer = csv_writer_create(output_file);
-        if (!writer) {
-            fprintf(stderr, "Error: Failed to create output file: %s\n", output_file);
-            /* Cleanup task args - smiles pointers are not owned, don't free */
+        /* ================================================================
+         * Phase 2: Parallel CSV formatting + bulk writing
+         * ================================================================ */
+
+        /* Prepare output header: original columns + descriptor columns */
+        int out_num_fields = in_doc->header.num_fields + num_descs;
+        const char** header_fields = (const char**)calloc(out_num_fields, sizeof(char*));
+
+        for (int i = 0; i < in_doc->header.num_fields; i++) {
+            header_fields[i] = in_doc->header.fields[i];
+        }
+        for (int i = 0; i < num_descs; i++) {
+            header_fields[in_doc->header.num_fields + i] = desc_names[i];
+        }
+
+        /* Estimate average line size for bulk writer pre-allocation */
+        size_t avg_line_size = (size_t)(out_num_fields * 12);  /* ~12 chars per field average */
+
+        /* Create bulk writer for parallel row formatting */
+        csv_bulk_writer_t* bulk = csv_bulk_writer_create((int)total_rows, avg_line_size);
+        if (!bulk) {
+            fprintf(stderr, "Error: Failed to create bulk writer\n");
+            free(header_fields);
             free(task_args);
             thread_pool_free(pool);
             csv_document_free(in_doc);
@@ -1038,67 +1074,181 @@ static int cmd_compute(int argc, char* argv[]) {
             return 1;
         }
 
-        /* Write output header: original columns + descriptor columns */
-        int out_num_fields = in_doc->header.num_fields + num_descs;
-        const char** out_fields = calloc(out_num_fields, sizeof(char*));
-
-        for (int i = 0; i < in_doc->header.num_fields; i++) {
-            out_fields[i] = in_doc->header.fields[i];
+        /* Allocate field buffers for each row (for parallel access) */
+        const char*** all_row_fields = (const char***)calloc(total_rows, sizeof(const char**));
+        csv_format_task_t* format_tasks = (csv_format_task_t*)calloc(total_rows, sizeof(csv_format_task_t));
+        if (!all_row_fields || !format_tasks) {
+            fprintf(stderr, "Error: Memory allocation failed\n");
+            if (all_row_fields) free(all_row_fields);
+            if (format_tasks) free(format_tasks);
+            csv_bulk_writer_free(bulk);
+            free(header_fields);
+            free(task_args);
+            thread_pool_free(pool);
+            csv_document_free(in_doc);
+            descriptor_free_names(desc_names, num_descs);
+            return 1;
         }
-        for (int i = 0; i < num_descs; i++) {
-            out_fields[in_doc->header.num_fields + i] = desc_names[i];
-        }
-        csv_writer_write_fields(writer, out_fields, out_num_fields);
 
-        /* Collect results and write rows */
+        /* Save descriptor results before reusing pool (need them for both value access and cleanup) */
+        desc_task_result_t** desc_results = (desc_task_result_t**)calloc(total_rows, sizeof(desc_task_result_t*));
+        if (!desc_results) {
+            fprintf(stderr, "Error: Memory allocation failed\n");
+            free(all_row_fields);
+            free(format_tasks);
+            csv_bulk_writer_free(bulk);
+            free(header_fields);
+            free(task_args);
+            thread_pool_free(pool);
+            csv_document_free(in_doc);
+            descriptor_free_names(desc_names, num_descs);
+            return 1;
+        }
+        for (size_t i = 0; i < total_rows; i++) {
+            desc_results[i] = (desc_task_result_t*)thread_pool_get_result(pool, (int)i);
+        }
+
+        /* Count successes and prepare row field arrays */
         size_t success_count = 0;
-        char** row_out_fields = calloc(out_num_fields, sizeof(char*));
-
         for (int row_idx = 0; row_idx < in_doc->num_rows; row_idx++) {
             csv_row_t* row = &in_doc->rows[row_idx];
+            const char** row_fields = (const char**)calloc(out_num_fields, sizeof(const char*));
+            if (!row_fields) {
+                /* Cleanup on failure */
+                for (int j = 0; j < row_idx; j++) {
+                    free((void*)all_row_fields[j]);
+                }
+                for (size_t j = 0; j < total_rows; j++) {
+                    if (desc_results[j]) {
+                        free(desc_results[j]->buffer);
+                        free(desc_results[j]);
+                    }
+                }
+                free(desc_results);
+                free(all_row_fields);
+                free(format_tasks);
+                csv_bulk_writer_free(bulk);
+                free(header_fields);
+                free(task_args);
+                thread_pool_free(pool);
+                csv_document_free(in_doc);
+                descriptor_free_names(desc_names, num_descs);
+                return 1;
+            }
+            all_row_fields[row_idx] = row_fields;
 
             /* Copy original fields */
             for (int i = 0; i < in_doc->header.num_fields; i++) {
-                row_out_fields[i] = (i < row->num_fields && row->fields[i]) ?
-                                    row->fields[i] : "";
+                row_fields[i] = (i < row->num_fields && row->fields[i]) ?
+                                row->fields[i] : "";
             }
 
-            /* Get result for this row */
-            desc_task_result_t* result = (desc_task_result_t*)thread_pool_get_result(pool, row_idx);
+            /* Get computed result and fill descriptor values */
+            desc_task_result_t* result = desc_results[row_idx];
             if (result && result->buffer) {
                 for (int i = 0; i < num_descs; i++) {
                     const char* raw_value = (i < result->num_values) ? result_value_ptr(result, i) : "";
-                    /* Sanitize: ensure no empty cells and all values are numeric */
-                    row_out_fields[in_doc->header.num_fields + i] = (char*)csv_sanitize_numeric(raw_value);
+                    row_fields[in_doc->header.num_fields + i] = csv_sanitize_numeric(raw_value);
                 }
                 if (result->success) {
                     success_count++;
                 }
             } else {
-                /* No result - fill with 0 (not empty strings) */
                 for (int i = 0; i < num_descs; i++) {
-                    row_out_fields[in_doc->header.num_fields + i] = "0";
+                    row_fields[in_doc->header.num_fields + i] = "0";
                 }
             }
-
-            /* Write row */
-            csv_writer_write_fields(writer, (const char**)row_out_fields, out_num_fields);
         }
 
-        /* Cleanup results - much simpler with single buffer */
-        for (size_t i = 0; i < total_rows; i++) {
-            desc_task_result_t* result = (desc_task_result_t*)thread_pool_get_result(pool, (int)i);
-            if (result) {
-                free(result->buffer);  /* Single free instead of N frees */
-                free(result);
+        /* Clear thread pool completed tasks for reuse */
+        thread_pool_clear_completed(pool);
+
+        /* Ensure capacity for format tasks */
+        if (thread_pool_ensure_capacity(pool, (int)total_rows + 1) < 0) {
+            fprintf(stderr, "Error: Failed to allocate format task capacity\n");
+            for (size_t i = 0; i < total_rows; i++) free((void*)all_row_fields[i]);
+            for (size_t i = 0; i < total_rows; i++) {
+                if (desc_results[i]) { free(desc_results[i]->buffer); free(desc_results[i]); }
             }
-            /* Note: task_args[i].smiles points to in_doc data, not strdup'd - don't free */
+            free(desc_results);
+            free(all_row_fields);
+            free(format_tasks);
+            csv_bulk_writer_free(bulk);
+            free(header_fields);
+            free(task_args);
+            thread_pool_free(pool);
+            csv_document_free(in_doc);
+            descriptor_free_names(desc_names, num_descs);
+            return 1;
         }
 
+        /* Show CSV writing progress */
+        printf("Writing CSV output (%d rows)...\n", (int)total_rows);
+
+        /* Submit parallel CSV formatting tasks */
+        for (int row_idx = 0; row_idx < (int)total_rows; row_idx++) {
+            format_tasks[row_idx].row_idx = row_idx;
+            format_tasks[row_idx].bulk = bulk;
+            format_tasks[row_idx].fields = all_row_fields[row_idx];
+            format_tasks[row_idx].num_fields = out_num_fields;
+            thread_pool_submit(pool, csv_format_worker, &format_tasks[row_idx]);
+        }
+
+        /* Wait for all formatting to complete */
+        thread_pool_wait_all(pool);
+
+        /* Open output file and write header + bulk data */
+        FILE* out_file = fopen(output_file, "w");
+        if (!out_file) {
+            fprintf(stderr, "Error: Failed to create output file: %s\n", output_file);
+            for (size_t i = 0; i < total_rows; i++) free((void*)all_row_fields[i]);
+            for (size_t i = 0; i < total_rows; i++) {
+                if (desc_results[i]) { free(desc_results[i]->buffer); free(desc_results[i]); }
+            }
+            free(desc_results);
+            free(all_row_fields);
+            free(format_tasks);
+            csv_bulk_writer_free(bulk);
+            free(header_fields);
+            free(task_args);
+            thread_pool_free(pool);
+            csv_document_free(in_doc);
+            descriptor_free_names(desc_names, num_descs);
+            return 1;
+        }
+
+        /* Use large buffer for output file */
+        setvbuf(out_file, NULL, _IOFBF, 262144);  /* 256KB buffer */
+
+        /* Write header */
+        csv_write_header_line(out_file, header_fields, out_num_fields, ',');
+
+        /* Bulk write all formatted rows */
+        csv_status_t write_status = csv_bulk_write_all(bulk, out_file);
+        fclose(out_file);
+
+        if (write_status != CSV_OK) {
+            fprintf(stderr, "Error: Failed to write output file\n");
+        }
+
+        /* Cleanup descriptor results (saved before pool reuse) */
+        for (size_t i = 0; i < total_rows; i++) {
+            if (desc_results[i]) {
+                free(desc_results[i]->buffer);
+                free(desc_results[i]);
+            }
+        }
+        free(desc_results);
+
+        /* Cleanup row field arrays */
+        for (size_t i = 0; i < total_rows; i++) {
+            free((void*)all_row_fields[i]);
+        }
+        free(all_row_fields);
+        free(format_tasks);
+        csv_bulk_writer_free(bulk);
+        free(header_fields);
         free(task_args);
-        free(row_out_fields);
-        free(out_fields);
-        csv_writer_free(writer);
         thread_pool_free(pool);
         csv_document_free(in_doc);
         descriptor_free_names(desc_names, num_descs);

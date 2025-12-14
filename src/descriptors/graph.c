@@ -487,7 +487,6 @@ static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
     s->is_connected = (s->n_components == 1) ? 1 : 0;
 
     /* === Degree Statistics === */
-    int degrees[GRAPH_MAX_ATOMS];
     int heavy_indices[GRAPH_MAX_ATOMS];
     int hi = 0;
     double deg_sum = 0, deg_sq_sum = 0;
@@ -498,7 +497,6 @@ static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
         if (mol->atoms[i].element == ELEM_H) continue;
 
         int d = get_heavy_degree(mol, i);
-        degrees[hi] = d;
         heavy_indices[hi] = i;
         hi++;
 
