@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include "canonicalizer/types.h"
 
@@ -32,7 +33,7 @@ typedef struct {
     int num_tasks;
     int tasks_capacity;
     int next_task;
-    int completed_tasks;
+    atomic_int completed_tasks;  /* Atomic for lock-free progress reads */
 
     /* Synchronization */
     pthread_mutex_t mutex;

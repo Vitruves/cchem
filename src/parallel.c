@@ -52,7 +52,7 @@ static void* thread_pool_worker(void* arg) {
             pthread_mutex_lock(&pool->mutex);
             pool->tasks[task_id].result = result;
             pool->tasks[task_id].completed = true;
-            pool->completed_tasks++;
+            atomic_fetch_add(&pool->completed_tasks, 1);  /* Atomic increment */
             pthread_cond_signal(&pool->task_completed);
             pthread_mutex_unlock(&pool->mutex);
         }
@@ -112,7 +112,7 @@ thread_pool_t* thread_pool_create(int num_threads) {
     pool->running = true;
     pool->num_tasks = 0;
     pool->next_task = 0;
-    pool->completed_tasks = 0;
+    atomic_init(&pool->completed_tasks, 0);
 
     /* Create worker threads */
     for (int i = 0; i < num_threads; i++) {
@@ -185,7 +185,7 @@ void thread_pool_wait_all(thread_pool_t* pool) {
     if (!pool) return;
 
     pthread_mutex_lock(&pool->mutex);
-    while (pool->completed_tasks < pool->num_tasks) {
+    while (atomic_load(&pool->completed_tasks) < pool->num_tasks) {
         pthread_cond_wait(&pool->task_completed, &pool->mutex);
     }
     pthread_mutex_unlock(&pool->mutex);
@@ -204,11 +204,8 @@ bool thread_pool_task_completed(thread_pool_t* pool, int task_id) {
 int thread_pool_num_completed(thread_pool_t* pool) {
     if (!pool) return 0;
 
-    pthread_mutex_lock(&pool->mutex);
-    int completed = pool->completed_tasks;
-    pthread_mutex_unlock(&pool->mutex);
-
-    return completed;
+    /* Lock-free read using atomic - eliminates mutex contention from polling loop */
+    return atomic_load(&pool->completed_tasks);
 }
 
 void thread_pool_clear_completed(thread_pool_t* pool) {
@@ -217,14 +214,14 @@ void thread_pool_clear_completed(thread_pool_t* pool) {
     pthread_mutex_lock(&pool->mutex);
 
     /* Wait for all current tasks to complete first */
-    while (pool->completed_tasks < pool->num_tasks) {
+    while (atomic_load(&pool->completed_tasks) < pool->num_tasks) {
         pthread_cond_wait(&pool->task_completed, &pool->mutex);
     }
 
     /* Reset task queue counters for reuse (keeps allocated memory) */
     pool->num_tasks = 0;
     pool->next_task = 0;
-    pool->completed_tasks = 0;
+    atomic_store(&pool->completed_tasks, 0);
 
     /* Zero out the task array to clear old results */
     if (pool->tasks && pool->tasks_capacity > 0) {

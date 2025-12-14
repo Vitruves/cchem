@@ -206,6 +206,155 @@ static const int VALENCE_ELECTRONS[] = {
     [ELEM_As] = 5,
 };
 
+/* ============================================================================
+ * Pre-computed Element Properties (Single Lookup Optimization)
+ * ============================================================================ */
+
+/* All properties for a single element - avoids 10+ separate table lookups */
+typedef struct {
+    double mw;          /* atomic weight */
+    double en;          /* electronegativity */
+    double rcov;        /* covalent radius */
+    double vdw;         /* VdW volume */
+    double polz;        /* polarizability */
+    double ie;          /* ionization energy */
+    double ea;          /* electron affinity */
+    int8_t ox;          /* max oxidation state */
+    int8_t val;         /* valence electrons */
+    int8_t group;       /* periodic group */
+    uint8_t flags;      /* bit flags: 0x01=halogen, 0x02=hetero, 0x04=heavy_z, 0x08=metalloid */
+} elem_props_t;
+
+#define ELEM_FLAG_HALOGEN   0x01
+#define ELEM_FLAG_HETERO    0x02
+#define ELEM_FLAG_HEAVY_Z   0x04
+#define ELEM_FLAG_METALLOID 0x08
+
+#define MAX_ELEM_IDX 128
+
+/* Pre-computed property table - initialized once */
+static elem_props_t g_elem_props[MAX_ELEM_IDX];
+static bool g_elem_props_init = false;
+
+static void init_elem_props(void) {
+    if (g_elem_props_init) return;
+
+    /* Default values (carbon-like) */
+    for (int i = 0; i < MAX_ELEM_IDX; i++) {
+        g_elem_props[i] = (elem_props_t){
+            .mw = 12.011, .en = 2.55, .rcov = 0.77, .vdw = 20.58,
+            .polz = 1.76, .ie = 11.26, .ea = 1.26, .ox = 4, .val = 4, .group = 14,
+            .flags = 0
+        };
+    }
+
+    /* Hydrogen */
+    g_elem_props[ELEM_H] = (elem_props_t){
+        .mw = 1.008, .en = 2.20, .rcov = 0.31, .vdw = 7.24,
+        .polz = 0.667, .ie = 13.60, .ea = 0.75, .ox = 1, .val = 1, .group = 1,
+        .flags = 0
+    };
+
+    /* Carbon */
+    g_elem_props[ELEM_C] = (elem_props_t){
+        .mw = 12.011, .en = 2.55, .rcov = 0.77, .vdw = 20.58,
+        .polz = 1.76, .ie = 11.26, .ea = 1.26, .ox = 4, .val = 4, .group = 14,
+        .flags = 0
+    };
+
+    /* Nitrogen */
+    g_elem_props[ELEM_N] = (elem_props_t){
+        .mw = 14.007, .en = 3.04, .rcov = 0.71, .vdw = 15.60,
+        .polz = 1.10, .ie = 14.53, .ea = -0.07, .ox = 5, .val = 5, .group = 15,
+        .flags = ELEM_FLAG_HETERO
+    };
+
+    /* Oxygen */
+    g_elem_props[ELEM_O] = (elem_props_t){
+        .mw = 15.999, .en = 3.44, .rcov = 0.66, .vdw = 14.71,
+        .polz = 0.802, .ie = 13.62, .ea = 1.46, .ox = 2, .val = 6, .group = 16,
+        .flags = ELEM_FLAG_HETERO
+    };
+
+    /* Fluorine */
+    g_elem_props[ELEM_F] = (elem_props_t){
+        .mw = 18.998, .en = 3.98, .rcov = 0.57, .vdw = 13.31,
+        .polz = 0.557, .ie = 17.42, .ea = 3.40, .ox = 1, .val = 7, .group = 17,
+        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO
+    };
+
+    /* Phosphorus */
+    g_elem_props[ELEM_P] = (elem_props_t){
+        .mw = 30.974, .en = 2.19, .rcov = 1.07, .vdw = 24.43,
+        .polz = 3.63, .ie = 10.49, .ea = 0.75, .ox = 5, .val = 5, .group = 15,
+        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
+    };
+
+    /* Sulfur */
+    g_elem_props[ELEM_S] = (elem_props_t){
+        .mw = 32.065, .en = 2.58, .rcov = 1.05, .vdw = 24.43,
+        .polz = 2.90, .ie = 10.36, .ea = 2.08, .ox = 6, .val = 6, .group = 16,
+        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
+    };
+
+    /* Chlorine */
+    g_elem_props[ELEM_Cl] = (elem_props_t){
+        .mw = 35.453, .en = 3.16, .rcov = 1.02, .vdw = 22.45,
+        .polz = 2.18, .ie = 12.97, .ea = 3.61, .ox = 7, .val = 7, .group = 17,
+        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
+    };
+
+    /* Bromine */
+    g_elem_props[ELEM_Br] = (elem_props_t){
+        .mw = 79.904, .en = 2.96, .rcov = 1.20, .vdw = 26.52,
+        .polz = 3.05, .ie = 11.81, .ea = 3.36, .ox = 7, .val = 7, .group = 17,
+        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
+    };
+
+    /* Iodine */
+    g_elem_props[ELEM_I] = (elem_props_t){
+        .mw = 126.90, .en = 2.66, .rcov = 1.39, .vdw = 32.52,
+        .polz = 4.70, .ie = 10.45, .ea = 3.06, .ox = 7, .val = 7, .group = 17,
+        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
+    };
+
+    /* Silicon */
+    g_elem_props[ELEM_Si] = (elem_props_t){
+        .mw = 28.086, .en = 1.90, .rcov = 1.11, .vdw = 38.79,
+        .polz = 5.38, .ie = 8.15, .ea = 1.39, .ox = 4, .val = 4, .group = 14,
+        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z | ELEM_FLAG_METALLOID
+    };
+
+    /* Boron */
+    g_elem_props[ELEM_B] = (elem_props_t){
+        .mw = 10.811, .en = 2.04, .rcov = 0.84, .vdw = 29.82,
+        .polz = 3.03, .ie = 8.30, .ea = 0.28, .ox = 3, .val = 3, .group = 13,
+        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_METALLOID
+    };
+
+    /* Selenium */
+    g_elem_props[ELEM_Se] = (elem_props_t){
+        .mw = 78.96, .en = 2.55, .rcov = 1.20, .vdw = 28.73,
+        .polz = 3.77, .ie = 9.75, .ea = 2.02, .ox = 6, .val = 6, .group = 16,
+        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z | ELEM_FLAG_METALLOID
+    };
+
+    /* Arsenic */
+    g_elem_props[ELEM_As] = (elem_props_t){
+        .mw = 74.922, .en = 2.18, .rcov = 1.19, .vdw = 26.52,
+        .polz = 4.31, .ie = 9.79, .ea = 0.81, .ox = 5, .val = 5, .group = 15,
+        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z | ELEM_FLAG_METALLOID
+    };
+
+    g_elem_props_init = true;
+}
+
+/* Fast property lookup - single bounds check, returns pointer to all props */
+static inline const elem_props_t* get_elem_props(element_t elem) {
+    if (elem <= 0 || elem >= MAX_ELEM_IDX) return &g_elem_props[ELEM_C];
+    return &g_elem_props[elem];
+}
+
 /* Metalloid check */
 static inline bool is_metalloid(element_t elem) {
     return elem == ELEM_B || elem == ELEM_Si || elem == ELEM_As || elem == ELEM_Se;
@@ -427,8 +576,18 @@ typedef struct {
 static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
     memset(s, 0, sizeof(frac_stats_t));
 
+    /* Ensure property table is initialized */
+    if (!g_elem_props_init) init_elem_props();
+
     const int n_atoms = mol->num_atoms;
     const int n_bonds = mol->num_bonds;
+
+    /* Pre-compute hybridization for all atoms once (avoids repeated bond-type lookups) */
+    int8_t hyb_cache[512];  /* Stack-allocated, max 512 atoms */
+    const int max_cached = (n_atoms < 512) ? n_atoms : 512;
+    for (int i = 0; i < max_cached; i++) {
+        hyb_cache[i] = (int8_t)get_hybridization(mol, i);
+    }
 
     /* First pass: collect basic counts and sums */
     for (int i = 0; i < n_atoms; i++) {
@@ -440,22 +599,31 @@ static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
         s->n_atoms++;
         s->n_heavy++;
 
-        double mw = get_atomic_weight(e);
-        double en = get_electronegativity(e);
-        double rcov = get_covalent_radius(e);
-        double vdw = get_vdw_volume(e);
-        double polz = get_polarizability(e);
-        double ie = get_ionization_energy(e);
-        double ea = get_electron_affinity(e);
-        int ox = get_max_oxidation(e);
-        int val = get_valence_electrons(e);
-        int group = get_periodic_group(e);
+        /* Single property lookup instead of 10+ separate lookups */
+        const elem_props_t* p = get_elem_props(e);
+        double mw = p->mw;
+        double en = p->en;
+        double rcov = p->rcov;
+        double vdw = p->vdw;
+        double polz = p->polz;
+        double ie = p->ie;
+        double ea = p->ea;
+        int ox = p->ox;
+        int val = p->val;
+        int group = p->group;
+        uint8_t flags = p->flags;
 
         s->total_mw += mw;
         s->sum_en += en;
         s->sum_en_mw += en * mw;
         s->sum_vdw_mw += vdw * mw;
         s->sum_rcov_mw += rcov * mw;
+
+        /* Use flags for fast classification (single bit test vs function call) */
+        bool is_hetero = (flags & ELEM_FLAG_HETERO) != 0;
+        bool is_heavy = (flags & ELEM_FLAG_HEAVY_Z) != 0;
+        bool is_metal = (flags & ELEM_FLAG_METALLOID) != 0;
+        (void)flags; /* Avoid unused warning - flags used via is_* bools */
 
         /* Element-specific MW */
         switch (e) {
@@ -468,7 +636,7 @@ static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
             case ELEM_Cl: s->mw_Cl += mw; s->mw_halo += mw; s->mw_hetero += mw; s->n_halo++; s->n_hetero++; break;
             case ELEM_Br: s->mw_Br += mw; s->mw_halo += mw; s->mw_hetero += mw; s->n_halo++; s->n_hetero++; break;
             case ELEM_I:  s->mw_I += mw; s->mw_halo += mw; s->mw_hetero += mw; s->n_halo++; s->n_hetero++; break;
-            default:      if (is_heteroatom(e)) { s->mw_hetero += mw; s->n_hetero++; } break;
+            default:      if (is_hetero) { s->mw_hetero += mw; s->n_hetero++; } break;
         }
 
         /* EN-based: polar = EN > C (2.55) */
@@ -491,7 +659,7 @@ static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
         if (ea > 2.0) s->n_high_ea++;
         if (ea < 0.5) s->n_low_ea++;
         if (((int)ie) % 2 == 1) s->n_ie_odd++;
-        if (is_heavy_z(e) && ie < 11.0) s->n_low_ie_heavy++;
+        if (is_heavy && ie < 11.0) s->n_low_ie_heavy++;
 
         /* Valence */
         if (val % 2 == 0) s->n_even_valence++;
@@ -522,29 +690,29 @@ static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
             if (ring_neighbors > 2) s->n_bridge++;
         }
 
-        /* Hybridization */
-        int hyb = get_hybridization(mol, i);
+        /* Hybridization (use cached value) */
+        int hyb = (i < max_cached) ? hyb_cache[i] : get_hybridization(mol, i);
         if (hyb == 1) s->n_sp++;
         else if (hyb == 2) s->n_sp2++;
         else if (hyb == 3) s->n_sp3++;
 
         /* Metalloid */
-        if (is_metalloid(e)) s->n_metalloid++;
+        if (is_metal) s->n_metalloid++;
 
         /* Group 16 */
         if (group == 16) s->n_group16++;
 
-        /* Mixed property counts */
-        if (is_heteroatom(e) && en > 2.55) s->n_hetero_polar++;
-        if (is_heavy_z(e) && hyb == 3) s->n_sp3_heavy++;
+        /* Mixed property counts (use cached flags) */
+        if (is_hetero && en > 2.55) s->n_hetero_polar++;
+        if (is_heavy && hyb == 3) s->n_sp3_heavy++;
         if (hyb == 2 && en > 2.55) s->n_sp2_en_above++;
-        if (!is_heteroatom(e) && ea > 1.0) s->n_nonhetero_high_ea++;
-        if (is_heteroatom(e) && polz < 1.5) s->n_hetero_low_polz++;
+        if (!is_hetero && ea > 1.0) s->n_nonhetero_high_ea++;
+        if (is_hetero && polz < 1.5) s->n_hetero_low_polz++;
         if (hyb == 1 && en > 2.5) s->n_sp_high_en++;
         if (a->ring_count > 0 && ox > 2) s->n_ring_high_ox++;
-        if (is_heavy_z(e) && a->charge != 0) s->n_heavy_formal++;
+        if (is_heavy && a->charge != 0) s->n_heavy_formal++;
         if (hyb == 3 && polz > 3.5) s->n_sp3_high_polz++;
-        if (is_heavy_z(e) && ox < 0) s->n_heavy_ox_neg++;
+        if (is_heavy && ox < 0) s->n_heavy_ox_neg++;
         if (rcov / mw > 0.07) s->n_radius_mw_above++;
     }
 
@@ -558,12 +726,12 @@ static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
     /* Compute average EN for above/below calculations */
     s->avg_en = (s->n_heavy > 0) ? s->sum_en / s->n_heavy : 2.55;
 
-    /* Second pass: EN above/below average */
+    /* Second pass: EN above/below average (use cached property lookup) */
     for (int i = 0; i < n_atoms; i++) {
         const atom_t* a = &mol->atoms[i];
         if (a->element == ELEM_H) continue;
-        double en = get_electronegativity(a->element);
-        if (en > s->avg_en) s->n_en_above_avg++;
+        const elem_props_t* p = get_elem_props(a->element);
+        if (p->en > s->avg_en) s->n_en_above_avg++;
         else s->n_en_below_avg++;
     }
 
@@ -576,21 +744,25 @@ static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
 
         if (e1 == ELEM_H || e2 == ELEM_H) continue;
 
-        double en1 = get_electronegativity(e1);
-        double en2 = get_electronegativity(e2);
+        /* Use cached property lookups for both atoms */
+        const elem_props_t* p1 = get_elem_props(e1);
+        const elem_props_t* p2 = get_elem_props(e2);
+        double en1 = p1->en;
+        double en2 = p2->en;
+        double en_diff = fabs(en1 - en2);
 
         /* Polar vs unpolar bonds */
-        if (fabs(en1 - en2) < 0.4) s->n_unpolar_bonds++;
+        if (en_diff < 0.4) s->n_unpolar_bonds++;
         else s->n_polar_bonds++;
 
         /* Both atoms EN > 3.0 */
         if (en1 > 3.0 && en2 > 3.0) s->n_en_bonded++;
 
-        /* C-C bond types */
+        /* C-C bond types (use cached hybridization) */
         if (e1 == ELEM_C && e2 == ELEM_C) {
             s->n_cc_total++;
-            int hyb1 = get_hybridization(mol, b->atom1);
-            int hyb2 = get_hybridization(mol, b->atom2);
+            int hyb1 = (b->atom1 < max_cached) ? hyb_cache[b->atom1] : get_hybridization(mol, b->atom1);
+            int hyb2 = (b->atom2 < max_cached) ? hyb_cache[b->atom2] : get_hybridization(mol, b->atom2);
             if (hyb1 == 3 && hyb2 == 3) s->n_cc_sp3++;
             else if (hyb1 == 2 || hyb2 == 2) s->n_cc_sp2++;
         }
@@ -626,13 +798,15 @@ static void collect_frac_stats(const molecule_t* mol, frac_stats_t* s) {
             if (is_nonsingle) s->n_P_nonsingle++;
         }
 
-        /* Heavy atom polar bonds */
-        if ((is_heavy_z(e1) || is_heavy_z(e2)) && fabs(en1 - en2) >= 0.4) {
+        /* Heavy atom polar bonds (use flags) */
+        bool is_heavy = ((p1->flags | p2->flags) & ELEM_FLAG_HEAVY_Z) != 0;
+        if (is_heavy && en_diff >= 0.4) {
             s->n_heavy_polar_bond++;
         }
 
-        /* Halogen polar bonds */
-        if ((is_halogen(e1) || is_halogen(e2)) && fabs(en1 - en2) >= 0.4) {
+        /* Halogen polar bonds (use flags) */
+        bool is_halo = ((p1->flags | p2->flags) & ELEM_FLAG_HALOGEN) != 0;
+        if (is_halo && en_diff >= 0.4) {
             s->n_halo_polar_bond++;
         }
     }

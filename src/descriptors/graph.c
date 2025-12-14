@@ -245,9 +245,11 @@ static void compute_betweenness(const molecule_t* mol, double* betweenness,
     int queue[GRAPH_MAX_ATOMS];
     int stack[GRAPH_MAX_ATOMS];
 
-    /* Map from atom index to heavy index */
+    /* Map from atom index to heavy index (only zero what we need) */
     int atom_to_heavy[GRAPH_MAX_ATOMS];
-    memset(atom_to_heavy, -1, sizeof(atom_to_heavy));
+    for (int i = 0; i < mol->num_atoms; i++) {
+        atom_to_heavy[i] = -1;
+    }
     for (int i = 0; i < n_heavy; i++) {
         atom_to_heavy[heavy_indices[i]] = i;
     }

@@ -369,14 +369,28 @@ const char* csv_sanitize_numeric(const char* field) {
      * Also accepts: nan, inf, -inf
      */
 
-    /* Handle special values */
-    if (strcasecmp(p, "nan") == 0 || strcasecmp(p, "-nan") == 0) {
-        return "0";  /* Replace NaN with 0 */
+    /* Handle special values - fast inline checks instead of strcasecmp */
+    /* Check for nan/NaN/-nan (3-4 chars) */
+    if ((p[0] == 'n' || p[0] == 'N') && (p[1] == 'a' || p[1] == 'A') &&
+        (p[2] == 'n' || p[2] == 'N') && p[3] == '\0') {
+        return "0";
     }
-    if (strcasecmp(p, "inf") == 0 || strcasecmp(p, "-inf") == 0 ||
-        strcasecmp(p, "+inf") == 0 || strcasecmp(p, "infinity") == 0 ||
-        strcasecmp(p, "-infinity") == 0 || strcasecmp(p, "+infinity") == 0) {
-        return "0";  /* Replace Infinity with 0 */
+    if (p[0] == '-' && (p[1] == 'n' || p[1] == 'N') && (p[2] == 'a' || p[2] == 'A') &&
+        (p[3] == 'n' || p[3] == 'N') && p[4] == '\0') {
+        return "0";
+    }
+    /* Check for inf/Inf/+inf/-inf (3-4 chars) */
+    const char* ip = p;
+    if (*ip == '+' || *ip == '-') ip++;
+    if ((ip[0] == 'i' || ip[0] == 'I') && (ip[1] == 'n' || ip[1] == 'N') &&
+        (ip[2] == 'f' || ip[2] == 'F')) {
+        if (ip[3] == '\0') return "0";  /* inf */
+        /* Check for infinity */
+        if ((ip[3] == 'i' || ip[3] == 'I') && (ip[4] == 'n' || ip[4] == 'N') &&
+            (ip[5] == 'i' || ip[5] == 'I') && (ip[6] == 't' || ip[6] == 'T') &&
+            (ip[7] == 'y' || ip[7] == 'Y') && ip[8] == '\0') {
+            return "0";  /* infinity */
+        }
     }
 
     /* Check for valid number format */

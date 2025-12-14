@@ -693,13 +693,12 @@ static void* desc_batch_worker(void* arg) {
     result->row_idx = task->row_idx;
     result->num_values = task->num_descs;
 
-    /* Single allocation for all values */
+    /* Single allocation for all values (no memset - values will be written by formatters) */
     result->buffer = (char*)malloc(task->num_descs * DESC_VALUE_WIDTH);
     if (!result->buffer) {
         free(result);
         return NULL;
     }
-    memset(result->buffer, 0, task->num_descs * DESC_VALUE_WIDTH);
 
     if (!task->smiles || task->smiles[0] == '\0') {
         result->success = false;
@@ -741,9 +740,8 @@ static void* desc_batch_worker(void* arg) {
 
     if (compute_all) {
         /* Use cached defs (already loaded in thread-local storage) */
-        /* Batch computation - zero-initialize to avoid valgrind warnings */
+        /* Batch computation - no memset needed, all slots will be written */
         descriptor_value_t all_values[MAX_DESCRIPTORS];
-        memset(all_values, 0, sizeof(all_values));
         int num_computed = descriptors_compute_all(mol, NULL, all_values, MAX_DESCRIPTORS);
 
         /* Format with correct types - fast formatting for both ints and doubles */

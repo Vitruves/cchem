@@ -23,6 +23,10 @@
 /* Maximum descriptor name length */
 #define MAX_DESCRIPTOR_NAME 64
 
+/* Hash table size for fast descriptor lookup (must be power of 2) */
+#define DESC_HASH_TABLE_SIZE 4096
+#define DESC_HASH_TABLE_MASK (DESC_HASH_TABLE_SIZE - 1)
+
 /* Descriptor categories */
 typedef enum {
     DESC_CATEGORY_COUNTS = 0,
@@ -76,6 +80,7 @@ typedef cchem_status_t (*descriptor_batch_compute_fn)(const molecule_t* mol,
 /* Descriptor definition */
 struct descriptor_def {
     char name[MAX_DESCRIPTOR_NAME];           /* CamelCase name (e.g., "CarbonCount") */
+    char name_lower[MAX_DESCRIPTOR_NAME];     /* Pre-computed lowercase for fast comparison */
     char description[128];                     /* Human-readable description */
     descriptor_category_t category;            /* Category */
     descriptor_value_type_t value_type;        /* Return type */
@@ -83,6 +88,12 @@ struct descriptor_def {
     void* user_data;                           /* Optional user data */
     bool registered;                           /* Is registered in registry */
 };
+
+/* Hash table entry for fast descriptor lookup */
+typedef struct {
+    int16_t index;      /* Index into descriptors array, -1 if empty */
+    int16_t next;       /* Next index in chain for collision resolution, -1 if none */
+} desc_hash_entry_t;
 
 /* Descriptor registry */
 typedef struct {
@@ -92,6 +103,9 @@ typedef struct {
 
     /* Category-specific batch compute functions for optimization */
     descriptor_batch_compute_fn batch_compute[DESC_CATEGORY_COUNT];
+
+    /* Hash table for O(1) descriptor lookup by name */
+    desc_hash_entry_t hash_table[DESC_HASH_TABLE_SIZE];
 } descriptor_registry_t;
 
 /* Global registry */

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdint.h>
 #include "cchem/descriptors.h"
 #include "cchem/cchem.h"
 
@@ -17,16 +18,69 @@ descriptor_registry_t g_descriptor_registry = {0};
  * Internal Helpers
  * ============================================================================ */
 
-/* Case-insensitive string comparison */
-static int strcasecmp_local(const char* s1, const char* s2) {
-    while (*s1 && *s2) {
-        int c1 = tolower((unsigned char)*s1);
-        int c2 = tolower((unsigned char)*s2);
-        if (c1 != c2) return c1 - c2;
-        s1++;
-        s2++;
+/* Convert string to lowercase (for pre-computation at registration time) */
+static void str_to_lower(char* dst, const char* src, size_t max_len) {
+    size_t i = 0;
+    while (src[i] && i < max_len - 1) {
+        dst[i] = (char)tolower((unsigned char)src[i]);
+        i++;
     }
-    return tolower((unsigned char)*s1) - tolower((unsigned char)*s2);
+    dst[i] = '\0';
+}
+
+/* FNV-1a hash for already-lowercase string (fast path) */
+static uint32_t hash_name_lower(const char* name_lower) {
+    uint32_t hash = 2166136261u;  /* FNV offset basis */
+    while (*name_lower) {
+        hash ^= (uint32_t)(unsigned char)*name_lower;
+        hash *= 16777619u;  /* FNV prime */
+        name_lower++;
+    }
+    return hash & DESC_HASH_TABLE_MASK;
+}
+
+/* FNV-1a hash for case-insensitive string hashing (used at registration time only) */
+static uint32_t hash_name(const char* name) {
+    uint32_t hash = 2166136261u;  /* FNV offset basis */
+    while (*name) {
+        hash ^= (uint32_t)tolower((unsigned char)*name);
+        hash *= 16777619u;  /* FNV prime */
+        name++;
+    }
+    return hash & DESC_HASH_TABLE_MASK;
+}
+
+/* Initialize hash table */
+static void init_hash_table(void) {
+    for (int i = 0; i < DESC_HASH_TABLE_SIZE; i++) {
+        g_descriptor_registry.hash_table[i].index = -1;
+        g_descriptor_registry.hash_table[i].next = -1;
+    }
+}
+
+/* Add descriptor to hash table */
+static void hash_table_insert(int desc_index) {
+    const char* name = g_descriptor_registry.descriptors[desc_index].name;
+    uint32_t bucket = hash_name(name);
+
+    if (g_descriptor_registry.hash_table[bucket].index == -1) {
+        /* Empty bucket - direct insert */
+        g_descriptor_registry.hash_table[bucket].index = (int16_t)desc_index;
+    } else {
+        /* Collision - chain at end */
+        int16_t curr = (int16_t)bucket;
+        while (g_descriptor_registry.hash_table[curr].next != -1) {
+            curr = g_descriptor_registry.hash_table[curr].next;
+        }
+        /* Find empty slot for chaining (use descriptor slots after hash table) */
+        /* For simplicity, use linear probing to find empty bucket */
+        uint32_t probe = (bucket + 1) & DESC_HASH_TABLE_MASK;
+        while (g_descriptor_registry.hash_table[probe].index != -1) {
+            probe = (probe + 1) & DESC_HASH_TABLE_MASK;
+        }
+        g_descriptor_registry.hash_table[curr].next = (int16_t)probe;
+        g_descriptor_registry.hash_table[probe].index = (int16_t)desc_index;
+    }
 }
 
 /* ============================================================================
@@ -37,6 +91,7 @@ void descriptors_init(void) {
     if (g_descriptor_registry.initialized) return;
 
     memset(&g_descriptor_registry, 0, sizeof(g_descriptor_registry));
+    init_hash_table();
     g_descriptor_registry.initialized = true;
 
     /* Register all built-in descriptors */
@@ -94,10 +149,18 @@ cchem_status_t descriptor_register(const descriptor_def_t* def) {
     }
 
     /* Copy descriptor definition */
-    descriptor_def_t* reg = &g_descriptor_registry.descriptors[g_descriptor_registry.num_descriptors];
+    int new_index = g_descriptor_registry.num_descriptors;
+    descriptor_def_t* reg = &g_descriptor_registry.descriptors[new_index];
     memcpy(reg, def, sizeof(descriptor_def_t));
     reg->registered = true;
+
+    /* Pre-compute lowercase name for fast lookup */
+    str_to_lower(reg->name_lower, reg->name, MAX_DESCRIPTOR_NAME);
+
     g_descriptor_registry.num_descriptors++;
+
+    /* Add to hash table for fast lookup */
+    hash_table_insert(new_index);
 
     return CCHEM_OK;
 }
@@ -105,10 +168,23 @@ cchem_status_t descriptor_register(const descriptor_def_t* def) {
 const descriptor_def_t* descriptor_get(const char* name) {
     if (!name || !name[0]) return NULL;
 
-    for (int i = 0; i < g_descriptor_registry.num_descriptors; i++) {
-        if (strcasecmp_local(g_descriptor_registry.descriptors[i].name, name) == 0) {
-            return &g_descriptor_registry.descriptors[i];
+    /* Pre-compute lowercase query once (on stack, no allocation) */
+    char name_lower[MAX_DESCRIPTOR_NAME];
+    str_to_lower(name_lower, name, MAX_DESCRIPTOR_NAME);
+
+    /* Use hash table for O(1) lookup - hash the lowercase string directly */
+    uint32_t bucket = hash_name_lower(name_lower);
+    int16_t curr = (int16_t)bucket;
+
+    while (curr != -1 && g_descriptor_registry.hash_table[curr].index != -1) {
+        int idx = g_descriptor_registry.hash_table[curr].index;
+        if (idx >= 0 && idx < g_descriptor_registry.num_descriptors) {
+            /* Fast strcmp on pre-computed lowercase names (no per-char tolower) */
+            if (strcmp(g_descriptor_registry.descriptors[idx].name_lower, name_lower) == 0) {
+                return &g_descriptor_registry.descriptors[idx];
+            }
         }
+        curr = g_descriptor_registry.hash_table[curr].next;
     }
     return NULL;
 }
@@ -361,8 +437,10 @@ int descriptor_parse_names(const char* input,
         return -1;
     }
 
-    /* Handle "all" keyword */
-    if (strcasecmp_local(input, "all") == 0) {
+    /* Handle "all" keyword (case-insensitive) */
+    char input_lower[8];
+    str_to_lower(input_lower, input, sizeof(input_lower));
+    if (strcmp(input_lower, "all") == 0) {
         int count = 0;
         for (int i = 0; i < g_descriptor_registry.num_descriptors && count < max_names; i++) {
             out_names[count] = strdup(g_descriptor_registry.descriptors[i].name);
