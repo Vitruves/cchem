@@ -226,9 +226,9 @@ double coords3d_minimize(mol_coords_t* coords, const molecule_t* mol,
         }
 
         /* Save current gradients for potential backtrack */
-        memcpy(gx_save, gx, n * sizeof(double));
-        memcpy(gy_save, gy, n * sizeof(double));
-        memcpy(gz_save, gz, n * sizeof(double));
+        memcpy(gx_save, gx, (size_t)n * sizeof(double));
+        memcpy(gy_save, gy, (size_t)n * sizeof(double));
+        memcpy(gz_save, gz, (size_t)n * sizeof(double));
 
         /* Take step along negative gradient */
         for (int i = 0; i < n; i++) {

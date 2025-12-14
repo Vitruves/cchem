@@ -600,7 +600,7 @@ cchem_status_t smiles_writer_write(smiles_writer_t* writer) {
     /* Reset state */
     writer->buffer_pos = 0;
     writer->buffer[0] = '\0';
-    memset(writer->visited, 0, writer->mol->num_atoms * sizeof(bool));
+    memset(writer->visited, 0, (size_t)writer->mol->num_atoms * sizeof(bool));
     writer->num_pending = 0;
 
     /* Reset ring closure tracking */
@@ -636,7 +636,7 @@ cchem_status_t smiles_writer_write(smiles_writer_t* writer) {
         if (default_order) free(default_order);
         return CCHEM_ERROR_MEMORY;
     }
-    memset(dfs_order, -1, writer->mol->num_atoms * sizeof(int));
+    memset(dfs_order, -1, (size_t)writer->mol->num_atoms * sizeof(int));
 
     /* FIRST PASS: Identify all ring closures */
     int order_idx = 0;
