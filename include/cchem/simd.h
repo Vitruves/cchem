@@ -28,6 +28,9 @@
     #if defined(__AVX__)
         #define CCHEM_SIMD_AVX 1
         #include <immintrin.h>
+        #if defined(__FMA__)
+            #define CCHEM_SIMD_FMA 1
+        #endif
     #endif
 #endif
 
@@ -155,7 +158,12 @@ static inline double simd_sum_sq_double(const double* arr, int n) {
     int i = 0;
     for (; i <= n - 4; i += 4) {
         __m256d v = _mm256_loadu_pd(&arr[i]);
-        sum_vec = _mm256_fmadd_pd(v, v, sum_vec);  /* sum += v*v */
+#if defined(CCHEM_SIMD_FMA)
+        sum_vec = _mm256_fmadd_pd(v, v, sum_vec);  /* sum += v*v (FMA) */
+#else
+        __m256d sq = _mm256_mul_pd(v, v);          /* sq = v*v */
+        sum_vec = _mm256_add_pd(sum_vec, sq);      /* sum += sq */
+#endif
     }
     __m128d lo = _mm256_castpd256_pd128(sum_vec);
     __m128d hi = _mm256_extractf128_pd(sum_vec, 1);

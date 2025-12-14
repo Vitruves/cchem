@@ -24,6 +24,16 @@
 #include "cchem/canonicalizer/atom.h"
 #include "cchem/canonicalizer/bond.h"
 
+/* igraph API changed in version 0.10 - removed weights from base functions
+ * BUT: Homebrew igraph 1.0.0 (experimental) still uses the weights API
+ * Linux package manager igraph 0.10.x uses the new no-weights API
+ * So: only 0.10.x uses new API, versions <0.10 and >=1.0 use old API with weights */
+#if defined(IGRAPH_VERSION_MAJOR) && IGRAPH_VERSION_MAJOR == 0 && defined(IGRAPH_VERSION_MINOR) && IGRAPH_VERSION_MINOR >= 10
+    #define IGRAPH_API_NO_WEIGHTS 1
+#else
+    #define IGRAPH_API_NO_WEIGHTS 0
+#endif
+
 #define NUM_GRAPH_DESCRIPTORS 30
 #define LARGE_DIST 1e20  /* Large constant for distance comparisons (avoids -ffast-math issues) */
 
@@ -246,7 +256,13 @@ static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
         /* Eccentricities first (needed for diameter/radius) */
         igraph_vector_t ecc;
         igraph_vector_init(&ecc, n_heavy);
+#if IGRAPH_API_NO_WEIGHTS
+        /* igraph 0.10.x API: (graph, res, vids, mode) - no weights */
+        igraph_eccentricity(g, &ecc, igraph_vss_all(), IGRAPH_ALL);
+#else
+        /* igraph <0.10 and >=1.0 API: (graph, weights, res, vids, mode) */
         igraph_eccentricity(g, NULL, &ecc, igraph_vss_all(), IGRAPH_ALL);
+#endif
 
         double ecc_sum = 0, ecc_max = 0, ecc_min = LARGE_DIST;
         for (int i = 0; i < n_heavy; i++) {
@@ -266,7 +282,13 @@ static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
         if (n_heavy <= GRAPH_SIZE_SMALL) {
             igraph_matrix_t distances;
             igraph_matrix_init(&distances, n_heavy, n_heavy);
+#if IGRAPH_API_NO_WEIGHTS
+            /* igraph 0.10.x API: (graph, res, from, to, mode) - no weights */
+            igraph_distances(g, &distances, igraph_vss_all(), igraph_vss_all(), IGRAPH_ALL);
+#else
+            /* igraph <0.10 and >=1.0 API: (graph, weights, res, from, to, mode) */
             igraph_distances(g, NULL, &distances, igraph_vss_all(), igraph_vss_all(), IGRAPH_ALL);
+#endif
 
             double path_sum = 0;
             int path_count = 0;
@@ -302,7 +324,13 @@ static void collect_graph_stats(const molecule_t* mol, graph_stats_t* s) {
     if (n_heavy <= GRAPH_SIZE_SMALL) {
         igraph_vector_t betweenness;
         igraph_vector_init(&betweenness, n_heavy);
+#if IGRAPH_API_NO_WEIGHTS
+        /* igraph 0.10.x API: (graph, res, vids, directed) - no weights */
+        igraph_betweenness(g, &betweenness, igraph_vss_all(), false);
+#else
+        /* igraph <0.10 and >=1.0 API: (graph, weights, res, vids, directed, normalized) */
         igraph_betweenness(g, NULL, &betweenness, igraph_vss_all(), false, false);
+#endif
 
         double bw_sum = 0, bw_max = 0;
         for (int i = 0; i < n_heavy; i++) {
