@@ -5,6 +5,11 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+# Enable POSIX extensions on Linux (strdup, strcasecmp, madvise, usleep, etc.)
+if(NOT APPLE)
+    add_compile_definitions(_GNU_SOURCE)
+endif()
+
 # Enable Link Time Optimization (LTO) for Release builds
 include(CheckIPOSupported)
 check_ipo_supported(RESULT LTO_SUPPORTED OUTPUT LTO_OUTPUT)
