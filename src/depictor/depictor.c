@@ -71,8 +71,10 @@ static bool atom_has_lone_pair_contribution(const atom_t* atom, const molecule_t
         return true;
     }
 
-    /* Thiophene-type sulfur: aromatic S with 2 neighbors contributes lone pair */
-    if (atom->element == ELEM_S && atom->num_neighbors == 2) {
+    /* Aromatic sulfur contributes lone pair (thiophene, sulfone, etc.)
+     * S in aromatic systems contributes via lone pair regardless of
+     * additional substituents like =O in sulfones */
+    if (atom->element == ELEM_S) {
         return true;
     }
 
@@ -121,6 +123,20 @@ static bool kekule_solve(kekule_state_t* state, int bond_idx) {
                 return false;
             }
         }
+        /* Also verify no atom has more than one double (from aromatic bonds) */
+        for (int a = 0; a < state->mol->num_atoms; a++) {
+            int count = 0;
+            for (int i = 0; i < state->num_arom_bonds; i++) {
+                if (!state->bond_is_double[i]) continue;
+                int bi = state->arom_bond_idx[i];
+                if (state->mol->bonds[bi].atom1 == a || state->mol->bonds[bi].atom2 == a) {
+                    count++;
+                }
+            }
+            if (count > 1) {
+                return false;  /* Invalid: atom has multiple aromatic doubles */
+            }
+        }
         return true;
     }
 
@@ -133,68 +149,32 @@ static bool kekule_solve(kekule_state_t* state, int bond_idx) {
         return kekule_solve(state, bond_idx + 1);
     }
 
-    /* Check if either atom already has a double bond */
-    bool a1_has = state->has_double[a1];
-    bool a2_has = state->has_double[a2];
-
-    /* Atoms with lone pair contribution (pyrrole-type N, furan O, thiophene S)
-     * should be treated as already having their "double" - they contribute
-     * electrons via lone pair, not via double bond */
-    if (atom_has_lone_pair_contribution(&state->mol->atoms[a1], state->mol)) {
-        a1_has = true;
-    }
-    if (atom_has_lone_pair_contribution(&state->mol->atoms[a2], state->mol)) {
-        a2_has = true;
-    }
+    /* Check if either atom already has a double bond (from explicit DOUBLE or assigned) */
+    bool a1_has_double = state->has_double[a1];
+    bool a2_has_double = state->has_double[a2];
 
     /* Also check bonds we've assigned in this recursion */
     for (int i = 0; i < bond_idx; i++) {
         if (!state->bond_is_double[i]) continue;
         int bi = state->arom_bond_idx[i];
-        if (state->mol->bonds[bi].atom1 == a1 || state->mol->bonds[bi].atom2 == a1) a1_has = true;
-        if (state->mol->bonds[bi].atom1 == a2 || state->mol->bonds[bi].atom2 == a2) a2_has = true;
+        if (state->mol->bonds[bi].atom1 == a1 || state->mol->bonds[bi].atom2 == a1) a1_has_double = true;
+        if (state->mol->bonds[bi].atom1 == a2 || state->mol->bonds[bi].atom2 == a2) a2_has_double = true;
     }
 
     /* If both atoms already have doubles, this must be single */
-    if (a1_has && a2_has) {
+    if (a1_has_double && a2_has_double) {
         state->bond_is_double[bond_idx] = false;
         return kekule_solve(state, bond_idx + 1);
     }
 
-    /* If one atom has a double, this must be single */
-    if (a1_has || a2_has) {
+    /* If one atom already has a double, this must be single
+     * (to avoid giving that atom multiple doubles) */
+    if (a1_has_double || a2_has_double) {
         state->bond_is_double[bond_idx] = false;
         return kekule_solve(state, bond_idx + 1);
     }
 
-    /* Check if either atom MUST get their double from this bond */
-    bool a1_needs = !atom_has_lone_pair_contribution(&state->mol->atoms[a1], state->mol);
-    bool a2_needs = !atom_has_lone_pair_contribution(&state->mol->atoms[a2], state->mol);
-
-    /* Count remaining options for each atom */
-    int a1_remaining = 0, a2_remaining = 0;
-    for (int i = bond_idx; i < state->num_arom_bonds; i++) {
-        if (state->bond_is_double[i]) continue;  /* Already assigned */
-        int bi = state->arom_bond_idx[i];
-        int bi_a1 = state->mol->bonds[bi].atom1;
-        int bi_a2 = state->mol->bonds[bi].atom2;
-
-        if (bi_a1 == a1 || bi_a2 == a1) {
-            int other = (bi_a1 == a1) ? bi_a2 : bi_a1;
-            if (!state->has_double[other]) a1_remaining++;
-        }
-        if (bi_a1 == a2 || bi_a2 == a2) {
-            int other = (bi_a1 == a2) ? bi_a2 : bi_a1;
-            if (!state->has_double[other]) a2_remaining++;
-        }
-    }
-
-    /* If an atom needs a double and this is their only chance, force double */
-    if ((a1_needs && a1_remaining == 1) || (a2_needs && a2_remaining == 1)) {
-        state->bond_is_double[bond_idx] = true;
-        return kekule_solve(state, bond_idx + 1);
-    }
-
+    /* Neither atom has a double yet - try both options */
     /* Try double first, then single */
     state->bond_is_double[bond_idx] = true;
     if (kekule_solve(state, bond_idx + 1)) {
@@ -229,29 +209,15 @@ static void kekulize_molecule(molecule_t* mol) {
         return;
     }
 
-    /* Mark atoms that have double bonds from NON-aromatic bonds
-     * Only mark if the double bond is entirely outside the aromatic system */
+    /* Mark atoms that already have double bonds (from explicit BOND_DOUBLE) */
     state.has_double = calloc(mol->num_atoms, sizeof(bool));
     for (int b = 0; b < mol->num_bonds; b++) {
         if (mol->bonds[b].type == BOND_DOUBLE) {
             int a1 = mol->bonds[b].atom1;
             int a2 = mol->bonds[b].atom2;
-            /* Only mark as having double if BOTH atoms are outside aromatic system
-             * OR if the non-aromatic double is to an atom outside the system */
-            if (!in_aromatic[a1]) {
-                state.has_double[a1] = true;
-            }
-            if (!in_aromatic[a2]) {
-                state.has_double[a2] = true;
-            }
-            /* If one atom is aromatic and one isn't, the aromatic one gets
-             * its double bond need satisfied by this exocyclic double bond */
-            if (in_aromatic[a1] && !in_aromatic[a2]) {
-                state.has_double[a1] = true;
-            }
-            if (in_aromatic[a2] && !in_aromatic[a1]) {
-                state.has_double[a2] = true;
-            }
+            /* Mark BOTH atoms as having their double bond need satisfied */
+            state.has_double[a1] = true;
+            state.has_double[a2] = true;
         }
     }
 
@@ -261,12 +227,20 @@ static void kekulize_molecule(molecule_t* mol) {
     state.bond_is_double = calloc(state.num_arom_bonds, sizeof(bool));
 
     /* Solve using backtracking - constraint propagation is built into the solver */
-    kekule_solve(&state, 0);
+    bool success = kekule_solve(&state, 0);
 
-    /* Apply the solution */
-    for (int i = 0; i < state.num_arom_bonds; i++) {
-        int b = state.arom_bond_idx[i];
-        mol->bonds[b].type = state.bond_is_double[i] ? BOND_DOUBLE : BOND_SINGLE;
+    if (success) {
+        /* Apply the solution */
+        for (int i = 0; i < state.num_arom_bonds; i++) {
+            int b = state.arom_bond_idx[i];
+            mol->bonds[b].type = state.bond_is_double[i] ? BOND_DOUBLE : BOND_SINGLE;
+        }
+    } else {
+        /* Failed to find valid Kekule structure - convert all aromatic to single */
+        for (int i = 0; i < state.num_arom_bonds; i++) {
+            int b = state.arom_bond_idx[i];
+            mol->bonds[b].type = BOND_SINGLE;
+        }
     }
 
     free(state.bond_is_double);
