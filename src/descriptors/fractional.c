@@ -23,190 +23,6 @@
 #include "cchem/canonicalizer/bond.h"
 
 /* ============================================================================
- * Physical Constants
- * ============================================================================ */
-
-/* Atomic weights (g/mol) */
-static const double ATOMIC_WEIGHT[] = {
-    [ELEM_H]  = 1.008,
-    [ELEM_C]  = 12.011,
-    [ELEM_N]  = 14.007,
-    [ELEM_O]  = 15.999,
-    [ELEM_F]  = 18.998,
-    [ELEM_P]  = 30.974,
-    [ELEM_S]  = 32.065,
-    [ELEM_Cl] = 35.453,
-    [ELEM_Br] = 79.904,
-    [ELEM_I]  = 126.90,
-    [ELEM_Si] = 28.086,
-    [ELEM_B]  = 10.811,
-    [ELEM_Se] = 78.96,
-    [ELEM_As] = 74.922,
-};
-
-/* Pauling electronegativities */
-static const double ELECTRONEGATIVITY[] = {
-    [ELEM_H]  = 2.20,
-    [ELEM_C]  = 2.55,
-    [ELEM_N]  = 3.04,
-    [ELEM_O]  = 3.44,
-    [ELEM_F]  = 3.98,
-    [ELEM_P]  = 2.19,
-    [ELEM_S]  = 2.58,
-    [ELEM_Cl] = 3.16,
-    [ELEM_Br] = 2.96,
-    [ELEM_I]  = 2.66,
-    [ELEM_Si] = 1.90,
-    [ELEM_B]  = 2.04,
-    [ELEM_Se] = 2.55,
-    [ELEM_As] = 2.18,
-};
-
-/* Covalent radii in Angstroms */
-static const double COVALENT_RADIUS[] = {
-    [ELEM_H]  = 0.31,
-    [ELEM_C]  = 0.77,
-    [ELEM_N]  = 0.71,
-    [ELEM_O]  = 0.66,
-    [ELEM_F]  = 0.57,
-    [ELEM_P]  = 1.07,
-    [ELEM_S]  = 1.05,
-    [ELEM_Cl] = 1.02,
-    [ELEM_Br] = 1.20,
-    [ELEM_I]  = 1.39,
-    [ELEM_Si] = 1.11,
-    [ELEM_B]  = 0.84,
-    [ELEM_Se] = 1.20,
-    [ELEM_As] = 1.19,
-};
-
-/* VdW volumes in Angstrom^3 (approximate spherical) */
-static const double VDW_VOLUME[] = {
-    [ELEM_H]  = 7.24,
-    [ELEM_C]  = 20.58,
-    [ELEM_N]  = 15.60,
-    [ELEM_O]  = 14.71,
-    [ELEM_F]  = 13.31,
-    [ELEM_P]  = 24.43,
-    [ELEM_S]  = 24.43,
-    [ELEM_Cl] = 22.45,
-    [ELEM_Br] = 26.52,
-    [ELEM_I]  = 32.52,
-    [ELEM_Si] = 38.79,
-    [ELEM_B]  = 29.82,
-    [ELEM_Se] = 28.73,
-    [ELEM_As] = 26.52,
-};
-
-/* Atomic polarizabilities in Angstrom^3 */
-static const double POLARIZABILITY[] = {
-    [ELEM_H]  = 0.667,
-    [ELEM_C]  = 1.76,
-    [ELEM_N]  = 1.10,
-    [ELEM_O]  = 0.802,
-    [ELEM_F]  = 0.557,
-    [ELEM_P]  = 3.63,
-    [ELEM_S]  = 2.90,
-    [ELEM_Cl] = 2.18,
-    [ELEM_Br] = 3.05,
-    [ELEM_I]  = 4.70,
-    [ELEM_Si] = 5.38,
-    [ELEM_B]  = 3.03,
-    [ELEM_Se] = 3.77,
-    [ELEM_As] = 4.31,
-};
-
-/* First ionization energy in eV */
-static const double IONIZATION_ENERGY[] = {
-    [ELEM_H]  = 13.60,
-    [ELEM_C]  = 11.26,
-    [ELEM_N]  = 14.53,
-    [ELEM_O]  = 13.62,
-    [ELEM_F]  = 17.42,
-    [ELEM_P]  = 10.49,
-    [ELEM_S]  = 10.36,
-    [ELEM_Cl] = 12.97,
-    [ELEM_Br] = 11.81,
-    [ELEM_I]  = 10.45,
-    [ELEM_Si] = 8.15,
-    [ELEM_B]  = 8.30,
-    [ELEM_Se] = 9.75,
-    [ELEM_As] = 9.79,
-};
-
-/* Electron affinity in eV */
-static const double ELECTRON_AFFINITY[] = {
-    [ELEM_H]  = 0.75,
-    [ELEM_C]  = 1.26,
-    [ELEM_N]  = -0.07,  /* N has negative EA */
-    [ELEM_O]  = 1.46,
-    [ELEM_F]  = 3.40,
-    [ELEM_P]  = 0.75,
-    [ELEM_S]  = 2.08,
-    [ELEM_Cl] = 3.61,
-    [ELEM_Br] = 3.36,
-    [ELEM_I]  = 3.06,
-    [ELEM_Si] = 1.39,
-    [ELEM_B]  = 0.28,
-    [ELEM_Se] = 2.02,
-    [ELEM_As] = 0.81,
-};
-
-/* Common maximum oxidation states (approximate) */
-static const int MAX_OXIDATION[] = {
-    [ELEM_H]  = 1,
-    [ELEM_C]  = 4,
-    [ELEM_N]  = 5,
-    [ELEM_O]  = 2,
-    [ELEM_F]  = 1,
-    [ELEM_P]  = 5,
-    [ELEM_S]  = 6,
-    [ELEM_Cl] = 7,
-    [ELEM_Br] = 7,
-    [ELEM_I]  = 7,
-    [ELEM_Si] = 4,
-    [ELEM_B]  = 3,
-    [ELEM_Se] = 6,
-    [ELEM_As] = 5,
-};
-
-/* Periodic table group for group 16 check */
-static const int PERIODIC_GROUP[] = {
-    [ELEM_H]  = 1,
-    [ELEM_C]  = 14,
-    [ELEM_N]  = 15,
-    [ELEM_O]  = 16,
-    [ELEM_F]  = 17,
-    [ELEM_P]  = 15,
-    [ELEM_S]  = 16,
-    [ELEM_Cl] = 17,
-    [ELEM_Br] = 17,
-    [ELEM_I]  = 17,
-    [ELEM_Si] = 14,
-    [ELEM_B]  = 13,
-    [ELEM_Se] = 16,
-    [ELEM_As] = 15,
-};
-
-/* Valence electrons */
-static const int VALENCE_ELECTRONS[] = {
-    [ELEM_H]  = 1,
-    [ELEM_C]  = 4,
-    [ELEM_N]  = 5,
-    [ELEM_O]  = 6,
-    [ELEM_F]  = 7,
-    [ELEM_P]  = 5,
-    [ELEM_S]  = 6,
-    [ELEM_Cl] = 7,
-    [ELEM_Br] = 7,
-    [ELEM_I]  = 7,
-    [ELEM_Si] = 4,
-    [ELEM_B]  = 3,
-    [ELEM_Se] = 6,
-    [ELEM_As] = 5,
-};
-
-/* ============================================================================
  * Pre-computed Element Properties (Single Lookup Optimization)
  * ============================================================================ */
 
@@ -232,120 +48,167 @@ typedef struct {
 
 #define MAX_ELEM_IDX 128
 
-/* Pre-computed property table - initialized once */
+/* Flags shorthand for readability */
+#define F_HAL   ELEM_FLAG_HALOGEN
+#define F_HET   ELEM_FLAG_HETERO
+#define F_HVY   ELEM_FLAG_HEAVY_Z
+#define F_MET   ELEM_FLAG_METALLOID
+
+/* Static element property table - all 118 elements
+ * Data sources: IUPAC 2021 (MW), Pauling (EN), Cordero 2008 (rcov),
+ * Bondi (VdW radii -> volume), CRC Handbook (polz), NIST (IE, EA)
+ * VdW volume = 4/3 * pi * r^3 in Angstrom^3 */
+static const elem_props_t g_elem_props_data[MAX_ELEM_IDX] = {
+    /* 0: Unknown - use carbon defaults */
+    [0] = {12.011, 2.55, 0.77, 20.58, 1.76, 11.26, 1.26, 4, 4, 14, 0},
+
+    /* Period 1 */
+    [ELEM_H]  = {1.008,   2.20, 0.31,  7.24, 0.667, 13.60,  0.75, 1, 1, 1,  0},
+    [ELEM_He] = {4.003,   0.00, 0.28,  8.80, 0.205, 24.59,  0.00, 0, 2, 18, F_HET},
+
+    /* Period 2 */
+    [ELEM_Li] = {6.941,   0.98, 1.28, 22.28, 24.3,   5.39,  0.62, 1, 1, 1,  F_HET},
+    [ELEM_Be] = {9.012,   1.57, 0.96, 14.14, 5.60,   9.32,  0.00, 2, 2, 2,  F_HET},
+    [ELEM_B]  = {10.811,  2.04, 0.84, 17.87, 3.03,   8.30,  0.28, 3, 3, 13, F_HET | F_MET},
+    [ELEM_C]  = {12.011,  2.55, 0.77, 20.58, 1.76,  11.26,  1.26, 4, 4, 14, 0},
+    [ELEM_N]  = {14.007,  3.04, 0.71, 15.60, 1.10,  14.53, -0.07, 5, 5, 15, F_HET},
+    [ELEM_O]  = {15.999,  3.44, 0.66, 14.71, 0.802, 13.62,  1.46, 2, 6, 16, F_HET},
+    [ELEM_F]  = {18.998,  3.98, 0.57, 13.31, 0.557, 17.42,  3.40, 1, 7, 17, F_HAL | F_HET},
+    [ELEM_Ne] = {20.180,  0.00, 0.58, 12.33, 0.396, 21.56,  0.00, 0, 8, 18, F_HET | F_HVY},
+
+    /* Period 3 */
+    [ELEM_Na] = {22.990,  0.93, 1.66, 38.79, 24.1,   5.14,  0.55, 1, 1, 1,  F_HET | F_HVY},
+    [ELEM_Mg] = {24.305,  1.31, 1.41, 25.08, 10.6,   7.65,  0.00, 2, 2, 2,  F_HET | F_HVY},
+    [ELEM_Al] = {26.982,  1.61, 1.21, 32.52, 6.80,   5.99,  0.43, 3, 3, 13, F_HET | F_HVY},
+    [ELEM_Si] = {28.086,  1.90, 1.11, 38.79, 5.38,   8.15,  1.39, 4, 4, 14, F_HET | F_HVY | F_MET},
+    [ELEM_P]  = {30.974,  2.19, 1.07, 24.43, 3.63,  10.49,  0.75, 5, 5, 15, F_HET | F_HVY},
+    [ELEM_S]  = {32.065,  2.58, 1.05, 24.43, 2.90,  10.36,  2.08, 6, 6, 16, F_HET | F_HVY},
+    [ELEM_Cl] = {35.453,  3.16, 1.02, 22.45, 2.18,  12.97,  3.61, 7, 7, 17, F_HAL | F_HET | F_HVY},
+    [ELEM_Ar] = {39.948,  0.00, 1.06, 23.59, 1.64,  15.76,  0.00, 0, 8, 18, F_HET | F_HVY},
+
+    /* Period 4 */
+    [ELEM_K]  = {39.098,  0.82, 2.03, 76.73, 43.4,   4.34,  0.50, 1, 1, 1,  F_HET | F_HVY},
+    [ELEM_Ca] = {40.078,  1.00, 1.76, 53.81, 22.8,   6.11,  0.02, 2, 2, 2,  F_HET | F_HVY},
+    [ELEM_Sc] = {44.956,  1.36, 1.70, 45.70, 17.8,   6.56,  0.19, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Ti] = {47.867,  1.54, 1.60, 39.95, 14.6,   6.83,  0.08, 4, 2, 4,  F_HET | F_HVY},
+    [ELEM_V]  = {50.942,  1.63, 1.53, 35.16, 12.4,   6.75,  0.53, 5, 2, 5,  F_HET | F_HVY},
+    [ELEM_Cr] = {51.996,  1.66, 1.39, 28.73, 11.6,   6.77,  0.68, 6, 1, 6,  F_HET | F_HVY},
+    [ELEM_Mn] = {54.938,  1.55, 1.39, 28.73, 9.4,    7.43,  0.00, 7, 2, 7,  F_HET | F_HVY},
+    [ELEM_Fe] = {55.845,  1.83, 1.32, 25.72, 8.4,    7.90,  0.15, 6, 2, 8,  F_HET | F_HVY},
+    [ELEM_Co] = {58.933,  1.88, 1.26, 23.02, 7.5,    7.88,  0.66, 5, 2, 9,  F_HET | F_HVY},
+    [ELEM_Ni] = {58.693,  1.91, 1.24, 22.10, 6.8,    7.64,  1.16, 4, 2, 10, F_HET | F_HVY},
+    [ELEM_Cu] = {63.546,  1.90, 1.32, 25.72, 6.2,    7.73,  1.24, 4, 1, 11, F_HET | F_HVY},
+    [ELEM_Zn] = {65.380,  1.65, 1.22, 21.19, 5.75,   9.39,  0.00, 2, 2, 12, F_HET | F_HVY},
+    [ELEM_Ga] = {69.723,  1.81, 1.22, 32.52, 8.12,   6.00,  0.43, 3, 3, 13, F_HET | F_HVY},
+    [ELEM_Ge] = {72.640,  2.01, 1.20, 36.73, 6.07,   7.90,  1.23, 4, 4, 14, F_HET | F_HVY | F_MET},
+    [ELEM_As] = {74.922,  2.18, 1.19, 26.52, 4.31,   9.79,  0.81, 5, 5, 15, F_HET | F_HVY | F_MET},
+    [ELEM_Se] = {78.960,  2.55, 1.20, 28.73, 3.77,   9.75,  2.02, 6, 6, 16, F_HET | F_HVY | F_MET},
+    [ELEM_Br] = {79.904,  2.96, 1.20, 26.52, 3.05,  11.81,  3.36, 7, 7, 17, F_HAL | F_HET | F_HVY},
+    [ELEM_Kr] = {83.798,  3.00, 1.16, 25.72, 2.48,  14.00,  0.00, 2, 8, 18, F_HET | F_HVY},
+
+    /* Period 5 */
+    [ELEM_Rb] = {85.468,  0.82, 2.20, 90.46, 47.3,   4.18,  0.49, 1, 1, 1,  F_HET | F_HVY},
+    [ELEM_Sr] = {87.620,  0.95, 1.95, 67.85, 27.6,   5.69,  0.05, 2, 2, 2,  F_HET | F_HVY},
+    [ELEM_Y]  = {88.906,  1.22, 1.90, 59.19, 22.7,   6.22,  0.31, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Zr] = {91.224,  1.33, 1.75, 48.31, 17.9,   6.63,  0.43, 4, 2, 4,  F_HET | F_HVY},
+    [ELEM_Nb] = {92.906,  1.60, 1.64, 40.74, 15.7,   6.76,  0.89, 5, 1, 5,  F_HET | F_HVY},
+    [ELEM_Mo] = {95.960,  2.16, 1.54, 35.16, 12.8,   7.09,  0.75, 6, 1, 6,  F_HET | F_HVY},
+    [ELEM_Tc] = {98.000,  1.90, 1.47, 31.07, 11.4,   7.28,  0.55, 7, 2, 7,  F_HET | F_HVY},
+    [ELEM_Ru] = {101.07,  2.20, 1.46, 30.32, 9.6,    7.36,  1.05, 8, 1, 8,  F_HET | F_HVY},
+    [ELEM_Rh] = {102.91,  2.28, 1.42, 27.48, 8.6,    7.46,  1.14, 6, 1, 9,  F_HET | F_HVY},
+    [ELEM_Pd] = {106.42,  2.20, 1.39, 28.73, 4.8,    8.34,  0.56, 4, 0, 10, F_HET | F_HVY},
+    [ELEM_Ag] = {107.87,  1.93, 1.45, 29.58, 7.2,    7.58,  1.30, 3, 1, 11, F_HET | F_HVY},
+    [ELEM_Cd] = {112.41,  1.69, 1.44, 28.73, 7.36,   8.99,  0.00, 2, 2, 12, F_HET | F_HVY},
+    [ELEM_In] = {114.82,  1.78, 1.42, 39.95, 10.2,   5.79,  0.40, 3, 3, 13, F_HET | F_HVY},
+    [ELEM_Sn] = {118.71,  1.96, 1.39, 41.78, 7.7,    7.34,  1.11, 4, 4, 14, F_HET | F_HVY},
+    [ELEM_Sb] = {121.76,  2.05, 1.39, 38.79, 6.6,    8.61,  1.05, 5, 5, 15, F_HET | F_HVY | F_MET},
+    [ELEM_Te] = {127.60,  2.10, 1.38, 36.73, 5.5,    9.01,  1.97, 6, 6, 16, F_HET | F_HVY | F_MET},
+    [ELEM_I]  = {126.90,  2.66, 1.39, 32.52, 4.70,  10.45,  3.06, 7, 7, 17, F_HAL | F_HET | F_HVY},
+    [ELEM_Xe] = {131.29,  2.60, 1.40, 35.16, 4.04,  12.13,  0.00, 8, 8, 18, F_HET | F_HVY},
+
+    /* Period 6 */
+    [ELEM_Cs] = {132.91,  0.79, 2.44, 117.1, 59.6,   3.89,  0.47, 1, 1, 1,  F_HET | F_HVY},
+    [ELEM_Ba] = {137.33,  0.89, 2.15, 81.70, 39.7,   5.21,  0.14, 2, 2, 2,  F_HET | F_HVY},
+    [ELEM_La] = {138.91,  1.10, 2.07, 70.97, 31.1,   5.58,  0.47, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Ce] = {140.12,  1.12, 2.04, 67.85, 29.6,   5.54,  0.50, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Pr] = {140.91,  1.13, 2.03, 66.55, 28.2,   5.47,  0.50, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Nd] = {144.24,  1.14, 2.01, 64.00, 31.4,   5.53,  0.50, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Pm] = {145.00,  1.13, 1.99, 61.52, 30.0,   5.58,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Sm] = {150.36,  1.17, 1.98, 60.30, 28.8,   5.64,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Eu] = {151.96,  1.20, 1.98, 60.30, 27.7,   5.67,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Gd] = {157.25,  1.20, 1.96, 57.92, 23.5,   6.15,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Tb] = {158.93,  1.20, 1.94, 55.60, 25.5,   5.86,  0.50, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Dy] = {162.50,  1.22, 1.92, 53.34, 24.5,   5.94,  0.50, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Ho] = {164.93,  1.23, 1.92, 53.34, 23.6,   6.02,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Er] = {167.26,  1.24, 1.89, 50.12, 22.7,   6.11,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Tm] = {168.93,  1.25, 1.90, 51.13, 21.8,   6.18,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Yb] = {173.05,  1.10, 1.87, 47.03, 21.0,   6.25,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Lu] = {174.97,  1.27, 1.87, 47.03, 21.9,   5.43,  0.50, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Hf] = {178.49,  1.30, 1.75, 48.31, 16.2,   6.83,  0.00, 4, 2, 4,  F_HET | F_HVY},
+    [ELEM_Ta] = {180.95,  1.50, 1.70, 45.70, 13.1,   7.55,  0.32, 5, 2, 5,  F_HET | F_HVY},
+    [ELEM_W]  = {183.84,  2.36, 1.62, 39.38, 11.1,   7.86,  0.82, 6, 2, 6,  F_HET | F_HVY},
+    [ELEM_Re] = {186.21,  1.90, 1.51, 33.51, 9.7,    7.83,  0.15, 7, 2, 7,  F_HET | F_HVY},
+    [ELEM_Os] = {190.23,  2.20, 1.44, 28.73, 8.5,    8.44,  1.10, 8, 2, 8,  F_HET | F_HVY},
+    [ELEM_Ir] = {192.22,  2.20, 1.41, 26.79, 7.6,    8.97,  1.56, 6, 2, 9,  F_HET | F_HVY},
+    [ELEM_Pt] = {195.08,  2.28, 1.36, 24.61, 6.5,    8.96,  2.13, 6, 1, 10, F_HET | F_HVY},
+    [ELEM_Au] = {196.97,  2.54, 1.36, 24.61, 5.8,    9.23,  2.31, 5, 1, 11, F_HET | F_HVY},
+    [ELEM_Hg] = {200.59,  2.00, 1.32, 25.72, 5.02,  10.44,  0.00, 4, 2, 12, F_HET | F_HVY},
+    [ELEM_Tl] = {204.38,  1.62, 1.45, 32.52, 7.6,    6.11,  0.38, 3, 3, 13, F_HET | F_HVY},
+    [ELEM_Pb] = {207.20,  2.33, 1.46, 34.32, 6.8,    7.42,  0.36, 4, 4, 14, F_HET | F_HVY},
+    [ELEM_Bi] = {208.98,  2.02, 1.48, 36.73, 7.4,    7.29,  0.94, 5, 5, 15, F_HET | F_HVY},
+    [ELEM_Po] = {209.00,  2.00, 1.40, 31.82, 6.8,    8.41,  1.90, 6, 6, 16, F_HET | F_HVY | F_MET},
+    [ELEM_At] = {210.00,  2.20, 1.50, 35.16, 6.0,    9.30,  2.80, 7, 7, 17, F_HAL | F_HET | F_HVY},
+    [ELEM_Rn] = {222.00,  2.20, 1.50, 38.79, 5.3,   10.75,  0.00, 2, 8, 18, F_HET | F_HVY},
+
+    /* Period 7 */
+    [ELEM_Fr] = {223.00,  0.70, 2.60, 136.3, 48.6,   4.07,  0.47, 1, 1, 1,  F_HET | F_HVY},
+    [ELEM_Ra] = {226.00,  0.90, 2.21, 87.11, 38.3,   5.28,  0.10, 2, 2, 2,  F_HET | F_HVY},
+    [ELEM_Ac] = {227.00,  1.10, 2.15, 81.70, 32.1,   5.17,  0.35, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Th] = {232.04,  1.30, 2.06, 68.45, 32.1,   6.31,  0.00, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Pa] = {231.04,  1.50, 2.00, 62.75, 25.9,   5.89,  0.00, 5, 2, 3,  F_HET | F_HVY},
+    [ELEM_U]  = {238.03,  1.38, 1.96, 57.92, 24.9,   6.19,  0.00, 6, 2, 3,  F_HET | F_HVY},
+    [ELEM_Np] = {237.00,  1.36, 1.90, 59.19, 24.8,   6.27,  0.00, 7, 2, 3,  F_HET | F_HVY},
+    [ELEM_Pu] = {244.00,  1.28, 1.87, 55.60, 24.5,   6.03,  0.00, 7, 2, 3,  F_HET | F_HVY},
+    [ELEM_Am] = {243.00,  1.30, 1.80, 50.97, 23.3,   5.97,  0.00, 6, 2, 3,  F_HET | F_HVY},
+    [ELEM_Cm] = {247.00,  1.30, 1.69, 43.89, 23.0,   5.99,  0.00, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Bk] = {247.00,  1.30, 1.68, 43.18, 22.7,   6.20,  0.00, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Cf] = {251.00,  1.30, 1.68, 43.18, 20.5,   6.28,  0.00, 4, 2, 3,  F_HET | F_HVY},
+    [ELEM_Es] = {252.00,  1.30, 1.65, 40.74, 19.7,   6.42,  0.00, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Fm] = {257.00,  1.30, 1.67, 42.48, 23.8,   6.50,  0.00, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Md] = {258.00,  1.30, 1.73, 46.48, 18.2,   6.58,  0.00, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_No] = {259.00,  1.30, 1.76, 48.93, 17.5,   6.65,  0.00, 3, 2, 3,  F_HET | F_HVY},
+    [ELEM_Lr] = {262.00,  1.30, 1.61, 38.82, 16.8,   4.90,  0.00, 3, 2, 3,  F_HET | F_HVY},
+
+    /* Period 7 d-block and beyond (superheavy elements - estimated values) */
+    [ELEM_Rf] = {267.00,  1.30, 1.57, 36.46, 16.0,   6.00,  0.00, 4, 2, 4,  F_HET | F_HVY},
+    [ELEM_Db] = {268.00,  1.30, 1.49, 31.82, 15.0,   6.80,  0.00, 5, 2, 5,  F_HET | F_HVY},
+    [ELEM_Sg] = {269.00,  1.30, 1.43, 28.08, 14.0,   7.80,  0.00, 6, 2, 6,  F_HET | F_HVY},
+    [ELEM_Bh] = {270.00,  1.30, 1.41, 26.79, 13.0,   7.70,  0.00, 7, 2, 7,  F_HET | F_HVY},
+    [ELEM_Hs] = {269.00,  1.30, 1.34, 23.98, 12.0,   7.60,  0.00, 8, 2, 8,  F_HET | F_HVY},
+    [ELEM_Mt] = {278.00,  1.30, 1.29, 21.67, 11.0,   8.50,  0.00, 6, 2, 9,  F_HET | F_HVY},
+    [ELEM_Ds] = {281.00,  1.30, 1.28, 21.19, 10.0,   9.50,  0.00, 6, 2, 10, F_HET | F_HVY},
+    [ELEM_Rg] = {282.00,  1.30, 1.21, 18.58, 9.0,   10.60,  0.00, 5, 1, 11, F_HET | F_HVY},
+    [ELEM_Cn] = {285.00,  1.30, 1.22, 18.95, 8.0,   11.90,  0.00, 4, 2, 12, F_HET | F_HVY},
+    [ELEM_Nh] = {286.00,  1.30, 1.36, 24.61, 7.4,    7.30,  0.00, 3, 3, 13, F_HET | F_HVY},
+    [ELEM_Fl] = {289.00,  1.30, 1.43, 28.08, 7.0,    8.50,  0.00, 4, 4, 14, F_HET | F_HVY},
+    [ELEM_Mc] = {290.00,  1.30, 1.62, 39.38, 6.5,    5.60,  0.00, 3, 5, 15, F_HET | F_HVY},
+    [ELEM_Lv] = {293.00,  1.30, 1.75, 48.31, 6.0,    6.60,  0.00, 4, 6, 16, F_HET | F_HVY},
+    [ELEM_Ts] = {294.00,  1.30, 1.65, 40.74, 5.5,    7.70,  0.00, 5, 7, 17, F_HAL | F_HET | F_HVY},
+    [ELEM_Og] = {294.00,  1.30, 1.57, 36.46, 5.0,    8.90,  0.00, 6, 8, 18, F_HET | F_HVY},
+};
+
+#undef F_HAL
+#undef F_HET
+#undef F_HVY
+#undef F_MET
+
+/* Mutable copy for runtime (allows init check pattern) */
 static elem_props_t g_elem_props[MAX_ELEM_IDX];
 static bool g_elem_props_init = false;
 
 static void init_elem_props(void) {
     if (g_elem_props_init) return;
-
-    /* Default values (carbon-like) */
-    for (int i = 0; i < MAX_ELEM_IDX; i++) {
-        g_elem_props[i] = (elem_props_t){
-            .mw = 12.011, .en = 2.55, .rcov = 0.77, .vdw = 20.58,
-            .polz = 1.76, .ie = 11.26, .ea = 1.26, .ox = 4, .val = 4, .group = 14,
-            .flags = 0
-        };
-    }
-
-    /* Hydrogen */
-    g_elem_props[ELEM_H] = (elem_props_t){
-        .mw = 1.008, .en = 2.20, .rcov = 0.31, .vdw = 7.24,
-        .polz = 0.667, .ie = 13.60, .ea = 0.75, .ox = 1, .val = 1, .group = 1,
-        .flags = 0
-    };
-
-    /* Carbon */
-    g_elem_props[ELEM_C] = (elem_props_t){
-        .mw = 12.011, .en = 2.55, .rcov = 0.77, .vdw = 20.58,
-        .polz = 1.76, .ie = 11.26, .ea = 1.26, .ox = 4, .val = 4, .group = 14,
-        .flags = 0
-    };
-
-    /* Nitrogen */
-    g_elem_props[ELEM_N] = (elem_props_t){
-        .mw = 14.007, .en = 3.04, .rcov = 0.71, .vdw = 15.60,
-        .polz = 1.10, .ie = 14.53, .ea = -0.07, .ox = 5, .val = 5, .group = 15,
-        .flags = ELEM_FLAG_HETERO
-    };
-
-    /* Oxygen */
-    g_elem_props[ELEM_O] = (elem_props_t){
-        .mw = 15.999, .en = 3.44, .rcov = 0.66, .vdw = 14.71,
-        .polz = 0.802, .ie = 13.62, .ea = 1.46, .ox = 2, .val = 6, .group = 16,
-        .flags = ELEM_FLAG_HETERO
-    };
-
-    /* Fluorine */
-    g_elem_props[ELEM_F] = (elem_props_t){
-        .mw = 18.998, .en = 3.98, .rcov = 0.57, .vdw = 13.31,
-        .polz = 0.557, .ie = 17.42, .ea = 3.40, .ox = 1, .val = 7, .group = 17,
-        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO
-    };
-
-    /* Phosphorus */
-    g_elem_props[ELEM_P] = (elem_props_t){
-        .mw = 30.974, .en = 2.19, .rcov = 1.07, .vdw = 24.43,
-        .polz = 3.63, .ie = 10.49, .ea = 0.75, .ox = 5, .val = 5, .group = 15,
-        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
-    };
-
-    /* Sulfur */
-    g_elem_props[ELEM_S] = (elem_props_t){
-        .mw = 32.065, .en = 2.58, .rcov = 1.05, .vdw = 24.43,
-        .polz = 2.90, .ie = 10.36, .ea = 2.08, .ox = 6, .val = 6, .group = 16,
-        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
-    };
-
-    /* Chlorine */
-    g_elem_props[ELEM_Cl] = (elem_props_t){
-        .mw = 35.453, .en = 3.16, .rcov = 1.02, .vdw = 22.45,
-        .polz = 2.18, .ie = 12.97, .ea = 3.61, .ox = 7, .val = 7, .group = 17,
-        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
-    };
-
-    /* Bromine */
-    g_elem_props[ELEM_Br] = (elem_props_t){
-        .mw = 79.904, .en = 2.96, .rcov = 1.20, .vdw = 26.52,
-        .polz = 3.05, .ie = 11.81, .ea = 3.36, .ox = 7, .val = 7, .group = 17,
-        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
-    };
-
-    /* Iodine */
-    g_elem_props[ELEM_I] = (elem_props_t){
-        .mw = 126.90, .en = 2.66, .rcov = 1.39, .vdw = 32.52,
-        .polz = 4.70, .ie = 10.45, .ea = 3.06, .ox = 7, .val = 7, .group = 17,
-        .flags = ELEM_FLAG_HALOGEN | ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z
-    };
-
-    /* Silicon */
-    g_elem_props[ELEM_Si] = (elem_props_t){
-        .mw = 28.086, .en = 1.90, .rcov = 1.11, .vdw = 38.79,
-        .polz = 5.38, .ie = 8.15, .ea = 1.39, .ox = 4, .val = 4, .group = 14,
-        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z | ELEM_FLAG_METALLOID
-    };
-
-    /* Boron */
-    g_elem_props[ELEM_B] = (elem_props_t){
-        .mw = 10.811, .en = 2.04, .rcov = 0.84, .vdw = 29.82,
-        .polz = 3.03, .ie = 8.30, .ea = 0.28, .ox = 3, .val = 3, .group = 13,
-        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_METALLOID
-    };
-
-    /* Selenium */
-    g_elem_props[ELEM_Se] = (elem_props_t){
-        .mw = 78.96, .en = 2.55, .rcov = 1.20, .vdw = 28.73,
-        .polz = 3.77, .ie = 9.75, .ea = 2.02, .ox = 6, .val = 6, .group = 16,
-        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z | ELEM_FLAG_METALLOID
-    };
-
-    /* Arsenic */
-    g_elem_props[ELEM_As] = (elem_props_t){
-        .mw = 74.922, .en = 2.18, .rcov = 1.19, .vdw = 26.52,
-        .polz = 4.31, .ie = 9.79, .ea = 0.81, .ox = 5, .val = 5, .group = 15,
-        .flags = ELEM_FLAG_HETERO | ELEM_FLAG_HEAVY_Z | ELEM_FLAG_METALLOID
-    };
-
+    memcpy(g_elem_props, g_elem_props_data, sizeof(g_elem_props));
     g_elem_props_init = true;
 }
 
@@ -355,97 +218,16 @@ static inline const elem_props_t* get_elem_props(element_t elem) {
     return &g_elem_props[elem];
 }
 
-/* Metalloid check */
-static inline bool is_metalloid(element_t elem) {
-    return elem == ELEM_B || elem == ELEM_Si || elem == ELEM_As || elem == ELEM_Se;
+/* Check if element is a heavy atom (Z > 9, i.e., beyond first period main group) */
+static inline bool is_heavy_z(element_t elem) {
+    if (!g_elem_props_init) init_elem_props();
+    if (elem <= 0 || elem >= MAX_ELEM_IDX) return false;
+    return (g_elem_props[elem].flags & ELEM_FLAG_HEAVY_Z) != 0;
 }
 
 /* ============================================================================
  * Helper Functions
  * ============================================================================ */
-
-static inline double get_atomic_weight(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(ATOMIC_WEIGHT)/sizeof(ATOMIC_WEIGHT[0])))
-        return 12.011;
-    double w = ATOMIC_WEIGHT[elem];
-    return (w > 0.0) ? w : 12.011;
-}
-
-static inline double get_electronegativity(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(ELECTRONEGATIVITY)/sizeof(ELECTRONEGATIVITY[0])))
-        return 2.55;
-    double chi = ELECTRONEGATIVITY[elem];
-    return (chi > 0.0) ? chi : 2.55;
-}
-
-static inline double get_covalent_radius(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(COVALENT_RADIUS)/sizeof(COVALENT_RADIUS[0])))
-        return 0.77;
-    double r = COVALENT_RADIUS[elem];
-    return (r > 0.0) ? r : 0.77;
-}
-
-static inline double get_vdw_volume(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(VDW_VOLUME)/sizeof(VDW_VOLUME[0])))
-        return 20.58;
-    double v = VDW_VOLUME[elem];
-    return (v > 0.0) ? v : 20.58;
-}
-
-static inline double get_polarizability(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(POLARIZABILITY)/sizeof(POLARIZABILITY[0])))
-        return 1.76;
-    double p = POLARIZABILITY[elem];
-    return (p > 0.0) ? p : 1.76;
-}
-
-static inline double get_ionization_energy(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(IONIZATION_ENERGY)/sizeof(IONIZATION_ENERGY[0])))
-        return 11.26;
-    double ie = IONIZATION_ENERGY[elem];
-    return (ie > 0.0) ? ie : 11.26;
-}
-
-static inline double get_electron_affinity(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(ELECTRON_AFFINITY)/sizeof(ELECTRON_AFFINITY[0])))
-        return 1.26;
-    return ELECTRON_AFFINITY[elem];
-}
-
-static inline int get_max_oxidation(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(MAX_OXIDATION)/sizeof(MAX_OXIDATION[0])))
-        return 4;
-    return MAX_OXIDATION[elem];
-}
-
-static inline int get_periodic_group(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(PERIODIC_GROUP)/sizeof(PERIODIC_GROUP[0])))
-        return 14;
-    return PERIODIC_GROUP[elem];
-}
-
-static inline int get_valence_electrons(element_t elem) {
-    if (elem <= 0 || elem >= (int)(sizeof(VALENCE_ELECTRONS)/sizeof(VALENCE_ELECTRONS[0])))
-        return 4;
-    return VALENCE_ELECTRONS[elem];
-}
-
-/* Check if atom is a halogen */
-static inline bool is_halogen(element_t elem) {
-    return elem == ELEM_F || elem == ELEM_Cl || elem == ELEM_Br || elem == ELEM_I;
-}
-
-/* Check if atom is heteroatom (non-C, non-H) */
-static inline bool is_heteroatom(element_t elem) {
-    return elem != ELEM_C && elem != ELEM_H;
-}
-
-/* Check if atom is heavy (Z > 10) */
-static inline bool is_heavy_z(element_t elem) {
-    return elem == ELEM_P || elem == ELEM_S || elem == ELEM_Cl ||
-           elem == ELEM_Br || elem == ELEM_I || elem == ELEM_Si ||
-           elem == ELEM_Se || elem == ELEM_As;
-}
 
 /* Get hybridization from connectivity */
 static inline int get_hybridization(const molecule_t* mol, int atom_idx) {
