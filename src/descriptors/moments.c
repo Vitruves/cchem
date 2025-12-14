@@ -290,11 +290,12 @@ int descriptors_compute_moments_all(const molecule_t* mol, descriptor_value_t* v
 
     if (n_heavy == 0) return NUM_MOMENTS_DESCRIPTORS;
 
-    /* Allocate arrays */
+    /* Allocate arrays - use size_t to avoid overflow warnings */
+    size_t n = (size_t)n_heavy;
+    size_t arr_size = n * sizeof(double);
     bool heap_alloc = (n_heavy > MAX_ATOMS_STACK);
     double* prop_values;
     double* sorted;
-    size_t arr_size = (size_t)n_heavy * sizeof(double);
 
     if (heap_alloc) {
         prop_values = (double*)malloc(arr_size);
@@ -329,17 +330,17 @@ int descriptors_compute_moments_all(const molecule_t* mol, descriptor_value_t* v
         }
 
         /* Compute mean and std */
-        double mean = sum / n_heavy;
+        double mean = sum / (double)n;
         double var_sum = 0.0;
-        for (int i = 0; i < n_heavy; i++) {
+        for (size_t i = 0; i < n; i++) {
             double diff = prop_values[i] - mean;
             var_sum += diff * diff;
         }
-        double std = sqrt(var_sum / n_heavy);
+        double std = sqrt(var_sum / (double)n);
 
         /* Create sorted copy for quantile-based stats */
-        memcpy(sorted, prop_values, arr_size);
-        qsort(sorted, n_heavy, sizeof(double), compare_doubles);
+        for (size_t i = 0; i < n; i++) sorted[i] = prop_values[i];
+        qsort(sorted, n, sizeof(double), compare_doubles);
 
         /* Compute statistics */
         values[out_idx++].d = compute_skewness(prop_values, n_heavy, mean, std);
