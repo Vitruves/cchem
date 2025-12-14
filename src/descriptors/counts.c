@@ -496,6 +496,439 @@ static cchem_status_t desc_fluorine_count(const molecule_t* mol, descriptor_valu
     return count_element(mol, ELEM_F, value);
 }
 
+/* Additional element counts - all elements in periodic table */
+static cchem_status_t desc_helium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_He, value);
+}
+
+static cchem_status_t desc_lithium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Li, value);
+}
+
+static cchem_status_t desc_beryllium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Be, value);
+}
+
+static cchem_status_t desc_boron_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_B, value);
+}
+
+static cchem_status_t desc_neon_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ne, value);
+}
+
+static cchem_status_t desc_sodium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Na, value);
+}
+
+static cchem_status_t desc_magnesium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Mg, value);
+}
+
+static cchem_status_t desc_aluminum_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Al, value);
+}
+
+static cchem_status_t desc_silicon_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Si, value);
+}
+
+static cchem_status_t desc_argon_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ar, value);
+}
+
+static cchem_status_t desc_potassium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_K, value);
+}
+
+static cchem_status_t desc_calcium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ca, value);
+}
+
+static cchem_status_t desc_scandium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Sc, value);
+}
+
+static cchem_status_t desc_titanium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ti, value);
+}
+
+static cchem_status_t desc_vanadium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_V, value);
+}
+
+static cchem_status_t desc_chromium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Cr, value);
+}
+
+static cchem_status_t desc_manganese_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Mn, value);
+}
+
+static cchem_status_t desc_iron_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Fe, value);
+}
+
+static cchem_status_t desc_cobalt_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Co, value);
+}
+
+static cchem_status_t desc_nickel_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ni, value);
+}
+
+static cchem_status_t desc_copper_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Cu, value);
+}
+
+static cchem_status_t desc_zinc_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Zn, value);
+}
+
+static cchem_status_t desc_gallium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ga, value);
+}
+
+static cchem_status_t desc_germanium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ge, value);
+}
+
+static cchem_status_t desc_arsenic_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_As, value);
+}
+
+static cchem_status_t desc_selenium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Se, value);
+}
+
+static cchem_status_t desc_krypton_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Kr, value);
+}
+
+static cchem_status_t desc_rubidium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Rb, value);
+}
+
+static cchem_status_t desc_strontium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Sr, value);
+}
+
+static cchem_status_t desc_yttrium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Y, value);
+}
+
+static cchem_status_t desc_zirconium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Zr, value);
+}
+
+static cchem_status_t desc_niobium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Nb, value);
+}
+
+static cchem_status_t desc_molybdenum_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Mo, value);
+}
+
+static cchem_status_t desc_technetium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Tc, value);
+}
+
+static cchem_status_t desc_ruthenium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ru, value);
+}
+
+static cchem_status_t desc_rhodium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Rh, value);
+}
+
+static cchem_status_t desc_palladium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Pd, value);
+}
+
+static cchem_status_t desc_silver_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ag, value);
+}
+
+static cchem_status_t desc_cadmium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Cd, value);
+}
+
+static cchem_status_t desc_indium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_In, value);
+}
+
+static cchem_status_t desc_tin_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Sn, value);
+}
+
+static cchem_status_t desc_antimony_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Sb, value);
+}
+
+static cchem_status_t desc_tellurium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Te, value);
+}
+
+static cchem_status_t desc_xenon_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Xe, value);
+}
+
+static cchem_status_t desc_cesium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Cs, value);
+}
+
+static cchem_status_t desc_barium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ba, value);
+}
+
+static cchem_status_t desc_lanthanum_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_La, value);
+}
+
+static cchem_status_t desc_cerium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ce, value);
+}
+
+static cchem_status_t desc_praseodymium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Pr, value);
+}
+
+static cchem_status_t desc_neodymium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Nd, value);
+}
+
+static cchem_status_t desc_promethium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Pm, value);
+}
+
+static cchem_status_t desc_samarium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Sm, value);
+}
+
+static cchem_status_t desc_europium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Eu, value);
+}
+
+static cchem_status_t desc_gadolinium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Gd, value);
+}
+
+static cchem_status_t desc_terbium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Tb, value);
+}
+
+static cchem_status_t desc_dysprosium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Dy, value);
+}
+
+static cchem_status_t desc_holmium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ho, value);
+}
+
+static cchem_status_t desc_erbium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Er, value);
+}
+
+static cchem_status_t desc_thulium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Tm, value);
+}
+
+static cchem_status_t desc_ytterbium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Yb, value);
+}
+
+static cchem_status_t desc_lutetium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Lu, value);
+}
+
+static cchem_status_t desc_hafnium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Hf, value);
+}
+
+static cchem_status_t desc_tantalum_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ta, value);
+}
+
+static cchem_status_t desc_tungsten_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_W, value);
+}
+
+static cchem_status_t desc_rhenium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Re, value);
+}
+
+static cchem_status_t desc_osmium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Os, value);
+}
+
+static cchem_status_t desc_iridium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ir, value);
+}
+
+static cchem_status_t desc_platinum_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Pt, value);
+}
+
+static cchem_status_t desc_gold_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Au, value);
+}
+
+static cchem_status_t desc_mercury_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Hg, value);
+}
+
+static cchem_status_t desc_thallium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Tl, value);
+}
+
+static cchem_status_t desc_lead_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Pb, value);
+}
+
+static cchem_status_t desc_bismuth_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Bi, value);
+}
+
+static cchem_status_t desc_polonium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Po, value);
+}
+
+static cchem_status_t desc_astatine_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_At, value);
+}
+
+static cchem_status_t desc_radon_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Rn, value);
+}
+
+static cchem_status_t desc_francium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Fr, value);
+}
+
+static cchem_status_t desc_radium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ra, value);
+}
+
+static cchem_status_t desc_actinium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ac, value);
+}
+
+static cchem_status_t desc_thorium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Th, value);
+}
+
+static cchem_status_t desc_protactinium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Pa, value);
+}
+
+static cchem_status_t desc_uranium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_U, value);
+}
+
+static cchem_status_t desc_neptunium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Np, value);
+}
+
+static cchem_status_t desc_plutonium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Pu, value);
+}
+
+static cchem_status_t desc_americium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Am, value);
+}
+
+static cchem_status_t desc_curium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Cm, value);
+}
+
+static cchem_status_t desc_berkelium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Bk, value);
+}
+
+static cchem_status_t desc_californium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Cf, value);
+}
+
+static cchem_status_t desc_einsteinium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Es, value);
+}
+
+static cchem_status_t desc_fermium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Fm, value);
+}
+
+static cchem_status_t desc_mendelevium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Md, value);
+}
+
+static cchem_status_t desc_nobelium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_No, value);
+}
+
+static cchem_status_t desc_lawrencium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Lr, value);
+}
+
+static cchem_status_t desc_rutherfordium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Rf, value);
+}
+
+static cchem_status_t desc_dubnium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Db, value);
+}
+
+static cchem_status_t desc_seaborgium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Sg, value);
+}
+
+static cchem_status_t desc_bohrium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Bh, value);
+}
+
+static cchem_status_t desc_hassium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Hs, value);
+}
+
+static cchem_status_t desc_meitnerium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Mt, value);
+}
+
+static cchem_status_t desc_darmstadtium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ds, value);
+}
+
+static cchem_status_t desc_roentgenium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Rg, value);
+}
+
+static cchem_status_t desc_copernicium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Cn, value);
+}
+
+static cchem_status_t desc_nihonium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Nh, value);
+}
+
+static cchem_status_t desc_flerovium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Fl, value);
+}
+
+static cchem_status_t desc_moscovium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Mc, value);
+}
+
+static cchem_status_t desc_livermorium_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Lv, value);
+}
+
+static cchem_status_t desc_tennessine_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Ts, value);
+}
+
+static cchem_status_t desc_oganesson_count(const molecule_t* mol, descriptor_value_t* value) {
+    return count_element(mol, ELEM_Og, value);
+}
+
 /* ============================================================================
  * Atom Count Descriptors
  * ============================================================================ */
@@ -1939,6 +2372,126 @@ void descriptors_register_counts(void) {
     REGISTER_COUNT_DESC("BromineCount", "Number of bromine atoms", desc_bromine_count);
     REGISTER_COUNT_DESC("IodineCount", "Number of iodine atoms", desc_iodine_count);
     REGISTER_COUNT_DESC("FluorineCount", "Number of fluorine atoms", desc_fluorine_count);
+
+    /* Additional element counts - Period 1-2 */
+    REGISTER_COUNT_DESC("HeliumCount", "Number of helium atoms", desc_helium_count);
+    REGISTER_COUNT_DESC("LithiumCount", "Number of lithium atoms", desc_lithium_count);
+    REGISTER_COUNT_DESC("BerylliumCount", "Number of beryllium atoms", desc_beryllium_count);
+    REGISTER_COUNT_DESC("BoronCount", "Number of boron atoms", desc_boron_count);
+    REGISTER_COUNT_DESC("NeonCount", "Number of neon atoms", desc_neon_count);
+
+    /* Period 3 */
+    REGISTER_COUNT_DESC("SodiumCount", "Number of sodium atoms", desc_sodium_count);
+    REGISTER_COUNT_DESC("MagnesiumCount", "Number of magnesium atoms", desc_magnesium_count);
+    REGISTER_COUNT_DESC("AluminumCount", "Number of aluminum atoms", desc_aluminum_count);
+    REGISTER_COUNT_DESC("SiliconCount", "Number of silicon atoms", desc_silicon_count);
+    REGISTER_COUNT_DESC("ArgonCount", "Number of argon atoms", desc_argon_count);
+
+    /* Period 4 */
+    REGISTER_COUNT_DESC("PotassiumCount", "Number of potassium atoms", desc_potassium_count);
+    REGISTER_COUNT_DESC("CalciumCount", "Number of calcium atoms", desc_calcium_count);
+    REGISTER_COUNT_DESC("ScandiumCount", "Number of scandium atoms", desc_scandium_count);
+    REGISTER_COUNT_DESC("TitaniumCount", "Number of titanium atoms", desc_titanium_count);
+    REGISTER_COUNT_DESC("VanadiumCount", "Number of vanadium atoms", desc_vanadium_count);
+    REGISTER_COUNT_DESC("ChromiumCount", "Number of chromium atoms", desc_chromium_count);
+    REGISTER_COUNT_DESC("ManganeseCount", "Number of manganese atoms", desc_manganese_count);
+    REGISTER_COUNT_DESC("IronCount", "Number of iron atoms", desc_iron_count);
+    REGISTER_COUNT_DESC("CobaltCount", "Number of cobalt atoms", desc_cobalt_count);
+    REGISTER_COUNT_DESC("NickelCount", "Number of nickel atoms", desc_nickel_count);
+    REGISTER_COUNT_DESC("CopperCount", "Number of copper atoms", desc_copper_count);
+    REGISTER_COUNT_DESC("ZincCount", "Number of zinc atoms", desc_zinc_count);
+    REGISTER_COUNT_DESC("GalliumCount", "Number of gallium atoms", desc_gallium_count);
+    REGISTER_COUNT_DESC("GermaniumCount", "Number of germanium atoms", desc_germanium_count);
+    REGISTER_COUNT_DESC("ArsenicCount", "Number of arsenic atoms", desc_arsenic_count);
+    REGISTER_COUNT_DESC("SeleniumCount", "Number of selenium atoms", desc_selenium_count);
+    REGISTER_COUNT_DESC("KryptonCount", "Number of krypton atoms", desc_krypton_count);
+
+    /* Period 5 */
+    REGISTER_COUNT_DESC("RubidiumCount", "Number of rubidium atoms", desc_rubidium_count);
+    REGISTER_COUNT_DESC("StrontiumCount", "Number of strontium atoms", desc_strontium_count);
+    REGISTER_COUNT_DESC("YttriumCount", "Number of yttrium atoms", desc_yttrium_count);
+    REGISTER_COUNT_DESC("ZirconiumCount", "Number of zirconium atoms", desc_zirconium_count);
+    REGISTER_COUNT_DESC("NiobiumCount", "Number of niobium atoms", desc_niobium_count);
+    REGISTER_COUNT_DESC("MolybdenumCount", "Number of molybdenum atoms", desc_molybdenum_count);
+    REGISTER_COUNT_DESC("TechnetiumCount", "Number of technetium atoms", desc_technetium_count);
+    REGISTER_COUNT_DESC("RutheniumCount", "Number of ruthenium atoms", desc_ruthenium_count);
+    REGISTER_COUNT_DESC("RhodiumCount", "Number of rhodium atoms", desc_rhodium_count);
+    REGISTER_COUNT_DESC("PalladiumCount", "Number of palladium atoms", desc_palladium_count);
+    REGISTER_COUNT_DESC("SilverCount", "Number of silver atoms", desc_silver_count);
+    REGISTER_COUNT_DESC("CadmiumCount", "Number of cadmium atoms", desc_cadmium_count);
+    REGISTER_COUNT_DESC("IndiumCount", "Number of indium atoms", desc_indium_count);
+    REGISTER_COUNT_DESC("TinCount", "Number of tin atoms", desc_tin_count);
+    REGISTER_COUNT_DESC("AntimonyCount", "Number of antimony atoms", desc_antimony_count);
+    REGISTER_COUNT_DESC("TelluriumCount", "Number of tellurium atoms", desc_tellurium_count);
+    REGISTER_COUNT_DESC("XenonCount", "Number of xenon atoms", desc_xenon_count);
+
+    /* Period 6 */
+    REGISTER_COUNT_DESC("CesiumCount", "Number of cesium atoms", desc_cesium_count);
+    REGISTER_COUNT_DESC("BariumCount", "Number of barium atoms", desc_barium_count);
+    REGISTER_COUNT_DESC("LanthanumCount", "Number of lanthanum atoms", desc_lanthanum_count);
+    REGISTER_COUNT_DESC("CeriumCount", "Number of cerium atoms", desc_cerium_count);
+    REGISTER_COUNT_DESC("PraseodymiumCount", "Number of praseodymium atoms", desc_praseodymium_count);
+    REGISTER_COUNT_DESC("NeodymiumCount", "Number of neodymium atoms", desc_neodymium_count);
+    REGISTER_COUNT_DESC("PromethiumCount", "Number of promethium atoms", desc_promethium_count);
+    REGISTER_COUNT_DESC("SamariumCount", "Number of samarium atoms", desc_samarium_count);
+    REGISTER_COUNT_DESC("EuropiumCount", "Number of europium atoms", desc_europium_count);
+    REGISTER_COUNT_DESC("GadoliniumCount", "Number of gadolinium atoms", desc_gadolinium_count);
+    REGISTER_COUNT_DESC("TerbiumCount", "Number of terbium atoms", desc_terbium_count);
+    REGISTER_COUNT_DESC("DysprosiumCount", "Number of dysprosium atoms", desc_dysprosium_count);
+    REGISTER_COUNT_DESC("HolmiumCount", "Number of holmium atoms", desc_holmium_count);
+    REGISTER_COUNT_DESC("ErbiumCount", "Number of erbium atoms", desc_erbium_count);
+    REGISTER_COUNT_DESC("ThuliumCount", "Number of thulium atoms", desc_thulium_count);
+    REGISTER_COUNT_DESC("YtterbiumCount", "Number of ytterbium atoms", desc_ytterbium_count);
+    REGISTER_COUNT_DESC("LutetiumCount", "Number of lutetium atoms", desc_lutetium_count);
+    REGISTER_COUNT_DESC("HafniumCount", "Number of hafnium atoms", desc_hafnium_count);
+    REGISTER_COUNT_DESC("TantalumCount", "Number of tantalum atoms", desc_tantalum_count);
+    REGISTER_COUNT_DESC("TungstenCount", "Number of tungsten atoms", desc_tungsten_count);
+    REGISTER_COUNT_DESC("RheniumCount", "Number of rhenium atoms", desc_rhenium_count);
+    REGISTER_COUNT_DESC("OsmiumCount", "Number of osmium atoms", desc_osmium_count);
+    REGISTER_COUNT_DESC("IridiumCount", "Number of iridium atoms", desc_iridium_count);
+    REGISTER_COUNT_DESC("PlatinumCount", "Number of platinum atoms", desc_platinum_count);
+    REGISTER_COUNT_DESC("GoldCount", "Number of gold atoms", desc_gold_count);
+    REGISTER_COUNT_DESC("MercuryCount", "Number of mercury atoms", desc_mercury_count);
+    REGISTER_COUNT_DESC("ThalliumCount", "Number of thallium atoms", desc_thallium_count);
+    REGISTER_COUNT_DESC("LeadCount", "Number of lead atoms", desc_lead_count);
+    REGISTER_COUNT_DESC("BismuthCount", "Number of bismuth atoms", desc_bismuth_count);
+    REGISTER_COUNT_DESC("PoloniumCount", "Number of polonium atoms", desc_polonium_count);
+    REGISTER_COUNT_DESC("AstatineCount", "Number of astatine atoms", desc_astatine_count);
+    REGISTER_COUNT_DESC("RadonCount", "Number of radon atoms", desc_radon_count);
+
+    /* Period 7 */
+    REGISTER_COUNT_DESC("FranciumCount", "Number of francium atoms", desc_francium_count);
+    REGISTER_COUNT_DESC("RadiumCount", "Number of radium atoms", desc_radium_count);
+    REGISTER_COUNT_DESC("ActiniumCount", "Number of actinium atoms", desc_actinium_count);
+    REGISTER_COUNT_DESC("ThoriumCount", "Number of thorium atoms", desc_thorium_count);
+    REGISTER_COUNT_DESC("ProtactiniumCount", "Number of protactinium atoms", desc_protactinium_count);
+    REGISTER_COUNT_DESC("UraniumCount", "Number of uranium atoms", desc_uranium_count);
+    REGISTER_COUNT_DESC("NeptuniumCount", "Number of neptunium atoms", desc_neptunium_count);
+    REGISTER_COUNT_DESC("PlutoniumCount", "Number of plutonium atoms", desc_plutonium_count);
+    REGISTER_COUNT_DESC("AmericiumCount", "Number of americium atoms", desc_americium_count);
+    REGISTER_COUNT_DESC("CuriumCount", "Number of curium atoms", desc_curium_count);
+    REGISTER_COUNT_DESC("BerkeliumCount", "Number of berkelium atoms", desc_berkelium_count);
+    REGISTER_COUNT_DESC("CaliforniumCount", "Number of californium atoms", desc_californium_count);
+    REGISTER_COUNT_DESC("EinsteiniumCount", "Number of einsteinium atoms", desc_einsteinium_count);
+    REGISTER_COUNT_DESC("FermiumCount", "Number of fermium atoms", desc_fermium_count);
+    REGISTER_COUNT_DESC("MendeleviumCount", "Number of mendelevium atoms", desc_mendelevium_count);
+    REGISTER_COUNT_DESC("NobeliumCount", "Number of nobelium atoms", desc_nobelium_count);
+    REGISTER_COUNT_DESC("LawrenciumCount", "Number of lawrencium atoms", desc_lawrencium_count);
+    REGISTER_COUNT_DESC("RutherfordiumCount", "Number of rutherfordium atoms", desc_rutherfordium_count);
+    REGISTER_COUNT_DESC("DubniumCount", "Number of dubnium atoms", desc_dubnium_count);
+    REGISTER_COUNT_DESC("SeaborgiumCount", "Number of seaborgium atoms", desc_seaborgium_count);
+    REGISTER_COUNT_DESC("BohriumCount", "Number of bohrium atoms", desc_bohrium_count);
+    REGISTER_COUNT_DESC("HassiumCount", "Number of hassium atoms", desc_hassium_count);
+    REGISTER_COUNT_DESC("MeitneriumCount", "Number of meitnerium atoms", desc_meitnerium_count);
+    REGISTER_COUNT_DESC("DarmstadtiumCount", "Number of darmstadtium atoms", desc_darmstadtium_count);
+    REGISTER_COUNT_DESC("RoentgeniumCount", "Number of roentgenium atoms", desc_roentgenium_count);
+    REGISTER_COUNT_DESC("CoperniciumCount", "Number of copernicium atoms", desc_copernicium_count);
+    REGISTER_COUNT_DESC("NihoniumCount", "Number of nihonium atoms", desc_nihonium_count);
+    REGISTER_COUNT_DESC("FleroviumCount", "Number of flerovium atoms", desc_flerovium_count);
+    REGISTER_COUNT_DESC("MoscoviumCount", "Number of moscovium atoms", desc_moscovium_count);
+    REGISTER_COUNT_DESC("LivermoriumCount", "Number of livermorium atoms", desc_livermorium_count);
+    REGISTER_COUNT_DESC("TennessineCount", "Number of tennessine atoms", desc_tennessine_count);
+    REGISTER_COUNT_DESC("OganessonCount", "Number of oganesson atoms", desc_oganesson_count);
 
     /* Heteroatom counts */
     REGISTER_COUNT_DESC("HeteroatomCount", "Non-carbon, non-hydrogen atoms", desc_heteroatom_count);
