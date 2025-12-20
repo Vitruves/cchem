@@ -5,8 +5,32 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
-# Enable POSIX extensions on Linux (strdup, strcasecmp, madvise, usleep, etc.)
-if(NOT APPLE)
+# Detect architecture
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64|ARM64")
+    set(CCHEM_ARCH_ARM64 TRUE)
+    message(STATUS "Architecture: ARM64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    set(CCHEM_ARCH_X64 TRUE)
+    message(STATUS "Architecture: x86_64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "i[3-6]86|x86")
+    set(CCHEM_ARCH_X86 TRUE)
+    message(STATUS "Architecture: x86")
+else()
+    message(STATUS "Architecture: ${CMAKE_SYSTEM_PROCESSOR} (generic)")
+endif()
+
+# Platform-specific definitions
+if(WIN32)
+    # Windows: Enable POSIX-like functions and large file support
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS _USE_MATH_DEFINES)
+    if(MSVC)
+        add_compile_definitions(_CRT_NONSTDC_NO_DEPRECATE)
+    endif()
+elseif(APPLE)
+    # macOS: Darwin provides POSIX by default
+    add_compile_definitions(_DARWIN_C_SOURCE)
+else()
+    # Linux/BSD: Enable GNU extensions for POSIX functions
     add_compile_definitions(_GNU_SOURCE)
 endif()
 
@@ -17,40 +41,151 @@ if(LTO_SUPPORTED AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
     message(STATUS "LTO enabled")
 else()
-    message(STATUS "LTO not supported: ${LTO_OUTPUT}")
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(STATUS "LTO not supported: ${LTO_OUTPUT}")
+    endif()
 endif()
 
-# Compiler flags
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+# Option to enable sanitizers (Debug only)
+option(ENABLE_SANITIZERS "Enable AddressSanitizer and UBSan (Debug only)" OFF)
+
+# Option to build for native CPU (disable for portable binaries)
+option(ENABLE_NATIVE_ARCH "Optimize for native CPU architecture" ON)
+
+# Compiler-specific flags
+if(MSVC)
+    # Microsoft Visual C++
+    message(STATUS "Compiler: MSVC ${MSVC_VERSION}")
+
+    # Base warnings (W4 is high warning level)
+    add_compile_options(/W4)
+
+    # Disable specific noisy warnings
+    add_compile_options(/wd4100)  # unreferenced formal parameter
+    add_compile_options(/wd4244)  # conversion, possible loss of data
+    add_compile_options(/wd4267)  # size_t to int conversion
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(/Od /Zi /RTC1)
+    else()
+        # Release optimizations
+        add_compile_options(
+            /O2           # Maximize speed
+            /Oi           # Enable intrinsic functions
+            /Ot           # Favor fast code
+            /GL           # Whole program optimization
+            /fp:fast      # Fast floating point
+            /GS-          # Disable buffer security check for speed
+        )
+        add_link_options(/LTCG)  # Link-time code generation
+
+        # Architecture-specific optimizations
+        if(CCHEM_ARCH_X64 AND ENABLE_NATIVE_ARCH)
+            add_compile_options(/arch:AVX2)
+        elseif(CCHEM_ARCH_X86 AND ENABLE_NATIVE_ARCH)
+            add_compile_options(/arch:SSE2)
+        endif()
+    endif()
+
+elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    # GCC, Clang, AppleClang
+    message(STATUS "Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
+
     # Base warnings
     add_compile_options(-Wall -Wextra -Wpedantic)
 
-    # Option to enable sanitizers (causes malloc warnings on macOS)
-    option(ENABLE_SANITIZERS "Enable AddressSanitizer and UBSan (Debug only)" OFF)
+    # Additional useful warnings
+    add_compile_options(
+        -Wformat=2
+        -Wno-unused-parameter
+        -Wno-sign-compare
+    )
 
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        # Debug build: optional sanitizers
+        # Debug build
         add_compile_options(-g -O0)
+
         if(ENABLE_SANITIZERS)
             message(STATUS "Sanitizers enabled (ASan + UBSan)")
-            add_compile_options(-fsanitize=address,undefined)
+            add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
             add_link_options(-fsanitize=address,undefined)
         endif()
     else()
         # Release/default build: aggressive optimizations
-        # -O3: Aggressive optimization including vectorization
-        # -march=native: Use all CPU instructions available (AVX/AVX2/NEON)
-        # -ffast-math: Allow FP reordering (safe for descriptors)
-        # -fno-strict-aliasing: Allow type punning patterns
-        # -funroll-loops: Unroll small loops
-        add_compile_options(-O3 -march=native -ffast-math -fno-strict-aliasing -funroll-loops)
+        add_compile_options(
+            -O3                    # Aggressive optimization
+            -ffast-math            # Fast floating point (safe for descriptors)
+            -fno-strict-aliasing   # Allow type punning patterns
+            -funroll-loops         # Unroll small loops
+            -ftree-vectorize       # Enable vectorization
+        )
+
+        # Architecture-specific optimizations
+        if(ENABLE_NATIVE_ARCH)
+            # Native architecture - best performance on build machine
+            add_compile_options(-march=native -mtune=native)
+        else()
+            # Portable binaries with reasonable baseline
+            if(CCHEM_ARCH_ARM64)
+                if(APPLE)
+                    # Apple Silicon baseline (M1+)
+                    add_compile_options(-mcpu=apple-m1)
+                else()
+                    # Generic ARMv8.2-A with common extensions
+                    add_compile_options(-march=armv8.2-a+fp16+dotprod)
+                endif()
+            elseif(CCHEM_ARCH_X64)
+                # x86_64 baseline: SSE4.2 is universal on modern CPUs
+                add_compile_options(-march=x86-64-v2)
+            elseif(CCHEM_ARCH_X86)
+                add_compile_options(-march=i686 -msse2)
+            endif()
+        endif()
+
+        # Clang-specific optimizations
+        if(CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang")
+            add_compile_options(-fvectorize -fslp-vectorize)
+        endif()
+
+        # GCC-specific optimizations
+        if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+            add_compile_options(-fipa-pta -fgraphite-identity)
+        endif()
     endif()
 
-    # Suppress Homebrew LLVM libunwind reexport warnings on macOS
+    # Platform-specific linker flags
     if(APPLE)
+        # Suppress Homebrew LLVM libunwind reexport warnings
         add_link_options(-Wl,-w)
+    elseif(UNIX AND NOT APPLE)
+        # Linux: Enable relro and now for security, disable for performance if needed
+        if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+            add_link_options(-Wl,-O1 -Wl,--as-needed)
+        endif()
+    endif()
+
+elseif(CMAKE_C_COMPILER_ID STREQUAL "Intel" OR CMAKE_C_COMPILER_ID STREQUAL "IntelLLVM")
+    # Intel compilers (icc/icx)
+    message(STATUS "Compiler: Intel ${CMAKE_C_COMPILER_VERSION}")
+
+    add_compile_options(-Wall)
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(-g -O0)
+    else()
+        add_compile_options(
+            -O3
+            -xHost              # Optimize for host CPU
+            -ipo                # Interprocedural optimization
+            -fp-model=fast
+            -qopt-zmm-usage=high
+        )
     endif()
 endif()
+
+# Print build configuration summary
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Native arch optimization: ${ENABLE_NATIVE_ARCH}")
 
 # Find required libraries
 find_package(Threads REQUIRED)
