@@ -119,7 +119,7 @@ typedef struct {
     .margin = 50, \
     .bond_length = 35.0, \
     .atom_radius_scale = 0.60, \
-    .bond_width = 1.8, \
+    .bond_width = 2.5, \
     .background = {255, 255, 255}, \
     .show_carbons = false, \
     .show_hydrogens = false, \

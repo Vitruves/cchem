@@ -327,7 +327,10 @@ int element_default_valence(element_t elem, int charge) {
     if (elem < 0 || elem >= NUM_ELEMENTS) return 0;
 
     int base_valence = ELEMENT_DATA[elem].default_valences[0];
-    return base_valence - charge;
+    /* Positive charge increases valence (e.g., N+ can form 4 bonds)
+     * Negative charge decreases valence (e.g., O- forms only 1 bond) */
+    int adjusted = base_valence + charge;
+    return (adjusted > 0) ? adjusted : 0;
 }
 
 double element_atomic_mass(element_t elem) {

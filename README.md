@@ -3,7 +3,7 @@
 High-performance cheminformatics library written in pure C.
 
 **Key Features:**
-- 500+ molecular descriptors
+- 1600+ molecular descriptors
 - SMILES canonicalization with stereochemistry support
 - Molecular sanitization (salt removal, aromatization, neutralization, tautomers)
 - 2D/3D molecular visualization with MMFF94 force field
@@ -27,7 +27,7 @@ High-performance cheminformatics library written in pure C.
 - **Tautomer enumeration**: Generate keto-enol, amide-imidic acid tautomers
 - **Cleanup options**: Remove stereochemistry, isotopes, explicit hydrogens
 
-### Molecular Descriptors (500+)
+### Molecular Descriptors (1600+)
 
 | Category | Count | Description |
 |----------|-------|-------------|
@@ -43,6 +43,23 @@ High-performance cheminformatics library written in pure C.
 | Autocorrelation | 54 | Broto-Moreau 2D autocorrelations (ATS) lags 0-8 |
 | Solubility | 1 | CLogS aqueous solubility |
 | LogP/LogD | 2 | Wildman-Crippen LogP, Neural network LogD 7.4 (R²=0.94) |
+| MQN | 42 | Molecular Quantum Numbers |
+| VSA | 47 | SlogP_VSA, SMR_VSA, PEOE_VSA, EState_VSA |
+| BCUT | 48 | Burden-CAS-University of Texas eigenvalues |
+| Zagreb | 24 | Zagreb indices and variants |
+| Information | 24 | Information content descriptors |
+| Walk Counts | 36 | Molecular walk counts |
+| E-State Sums | 32 | Electrotopological state sums |
+| ETA | 24 | Extended topochemical atom indices |
+| Ring Complexity | 18 | Ring system complexity measures |
+| CPSA | 70 | Charged partial surface area |
+| Moments | 42 | Molecular geometry moments |
+| Aromatic | 64 | Aromatic system descriptors |
+| Atom Pairs | 56 | Distance-based atom pair fingerprints |
+| Framework | 40 | Molecular framework descriptors |
+| Constitutional | 34 | Constitutional descriptors |
+| Functional | 50+ | Carbonyl, nitrogen, sulfur, oxygen, heterocyclic scaffolds |
+| Pharmacophore | 30+ | Pharmacophore points, density, drug-likeness metrics |
 
 ### 2D/3D Visualization
 - 2D coordinate generation with automatic layout
@@ -62,6 +79,7 @@ High-performance cheminformatics library written in pure C.
 - Link Time Optimization (LTO)
 - Arena allocators and thread-local caches
 - Batch compute functions per descriptor category
+- Pipeline streaming for constant memory on large datasets
 
 ## Installation
 
@@ -69,7 +87,6 @@ High-performance cheminformatics library written in pure C.
 
 | Library | Purpose |
 |---------|---------|
-| igraph | Graph theory calculations |
 | cairo | 2D vector graphics rendering |
 | libjpeg | JPEG image output |
 | pthreads | Parallel processing |
@@ -78,13 +95,13 @@ High-performance cheminformatics library written in pure C.
 ### macOS (Homebrew)
 
 ```bash
-brew install igraph cairo jpeg
+brew install cairo jpeg
 ```
 
 ### Linux (apt)
 
 ```bash
-sudo apt-get install libigraph-dev libcairo2-dev libjpeg-dev
+sudo apt-get install libcairo2-dev libjpeg-dev
 ```
 
 ### Build
@@ -236,9 +253,9 @@ Options:
                               balls-sticks - Ball and stick model
                               spacefill    - CPK space-filling
                               surface      - Molecular surface
-  -W, --width <pixels>      Image width (default: 400)
-  -H, --height <pixels>     Image height (default: 400)
-  --bond-length <float>     Bond length in pixels (default: 30)
+  -W, --width <pixels>      Image width (default: 800)
+  -H, --height <pixels>     Image height (default: 800)
+  --bond-length <float>     Bond length in pixels (default: 35)
   --bond-width <float>      Bond width in pixels (default: 2)
   --margin <pixels>         Image margin (default: 20)
   --show-carbons            Show carbon atom labels

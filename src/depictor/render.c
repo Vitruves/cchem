@@ -318,24 +318,90 @@ static void render_atom_sphere(cairo_t* cr, const atom_t* atom, point2d_t pos,
     cairo_stroke(cr);
 }
 
-/* Render atom label in modern style (no circle background, just colored text) */
-static void render_atom_label_modern(cairo_t* cr, const atom_t* atom, point2d_t pos,
-                                      const depictor_options_t* opts,
-                                      rgb_color_t bg __attribute__((unused))) {
-    const char* symbol = element_to_symbol(atom->element);
-    char label[32];
+/* Calculate average bond direction for an atom (for H label positioning) */
+static point2d_t calculate_avg_bond_direction(const molecule_t* mol, int atom_idx,
+                                               const mol_coords_t* coords) {
+    point2d_t avg_dir = {0, 0};
+    int bond_count = 0;
 
-    /* Build label with hydrogens if needed */
-    if (opts->show_hydrogens && atom->implicit_h_count > 0) {
+    for (int b = 0; b < mol->num_bonds; b++) {
+        const bond_t* bond = &mol->bonds[b];
+        int other = -1;
+        if (bond->atom1 == atom_idx) other = bond->atom2;
+        else if (bond->atom2 == atom_idx) other = bond->atom1;
+
+        if (other >= 0 && mol->atoms[other].element != ELEM_H) {
+            point2d_t dir = point2d_sub(coords->coords_2d[other], coords->coords_2d[atom_idx]);
+            avg_dir = point2d_add(avg_dir, dir);
+            bond_count++;
+        }
+    }
+
+    if (bond_count > 0) {
+        avg_dir = point2d_scale(avg_dir, 1.0 / bond_count);
+    }
+    return avg_dir;
+}
+
+/* Format charge string for display */
+static void format_charge_string(int charge, char* out, size_t out_size) {
+    out[0] = '\0';
+    if (charge == 1) {
+        snprintf(out, out_size, "+");
+    } else if (charge == -1) {
+        snprintf(out, out_size, "-");
+    } else if (charge > 1) {
+        snprintf(out, out_size, "%d+", charge);
+    } else if (charge < -1) {
+        snprintf(out, out_size, "%d-", -charge);
+    }
+}
+
+/* Render atom label in modern style (no circle background, just colored text)
+ * Extended version with bond direction for H positioning */
+static void render_atom_label_modern_ex(cairo_t* cr, const atom_t* atom, point2d_t pos,
+                                         const depictor_options_t* opts,
+                                         rgb_color_t bg __attribute__((unused)),
+                                         const molecule_t* mol, int atom_idx,
+                                         const mol_coords_t* coords) {
+    const char* symbol = element_to_symbol(atom->element);
+    char label[64];
+    char charge_str[8];
+
+    /* Determine if H should go on left or right based on bond direction */
+    bool h_on_left = false;
+    if (mol && coords && atom->implicit_h_count > 0) {
+        point2d_t avg_dir = calculate_avg_bond_direction(mol, atom_idx, coords);
+        /* If average bond direction points to the right (positive x), put H on left */
+        h_on_left = (avg_dir.x > 0.1);
+    }
+
+    /* Format charge string */
+    format_charge_string(atom->charge, charge_str, sizeof(charge_str));
+
+    /* Build label with hydrogens if needed
+     * Heteroatoms (non-C, non-H) should always show their H */
+    bool is_heteroatom = (atom->element != ELEM_C && atom->element != ELEM_H);
+    bool show_h = (is_heteroatom && atom->implicit_h_count > 0) ||
+                  (opts->show_hydrogens && atom->implicit_h_count > 0) ||
+                  (atom->element == ELEM_C && atom->implicit_h_count >= 3);
+
+    if (show_h) {
+        char h_part[16];
         if (atom->implicit_h_count == 1)
-            snprintf(label, sizeof(label), "%sH", symbol);
+            snprintf(h_part, sizeof(h_part), "H");
         else
-            snprintf(label, sizeof(label), "%sH%d", symbol, atom->implicit_h_count);
-    } else if (atom->element == ELEM_C && atom->implicit_h_count >= 3) {
-        /* Terminal carbon shown as CH3 */
-        snprintf(label, sizeof(label), "CH%d", atom->implicit_h_count);
+            snprintf(h_part, sizeof(h_part), "H%d", atom->implicit_h_count);
+
+        if (h_on_left) {
+            /* H before symbol: HO, HN, H2N, etc. */
+            snprintf(label, sizeof(label), "%s%s%s", h_part, symbol, charge_str);
+        } else {
+            /* H after symbol: OH, NH, NH2, etc. */
+            snprintf(label, sizeof(label), "%s%s%s", symbol, h_part, charge_str);
+        }
     } else {
-        snprintf(label, sizeof(label), "%s", symbol);
+        snprintf(label, sizeof(label), "%s%s", symbol, charge_str);
     }
 
     double font_size = opts->font_size * 9.0;
@@ -358,6 +424,14 @@ static void render_atom_label_modern(cairo_t* cr, const atom_t* atom, point2d_t 
     cairo_show_text(cr, label);
 }
 
+/* Render atom label in modern style (no circle background, just colored text) */
+static void render_atom_label_modern(cairo_t* cr, const atom_t* atom, point2d_t pos,
+                                      const depictor_options_t* opts,
+                                      rgb_color_t bg) {
+    /* Fallback without bond direction info - H goes on right */
+    render_atom_label_modern_ex(cr, atom, pos, opts, bg, NULL, -1, NULL);
+}
+
 static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
                               const depictor_options_t* opts, rgb_color_t bg,
                               double base_scale) {
@@ -374,15 +448,23 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
         if (should_show_label(atom, opts) && opts->render_style != RENDER_STYLE_SPACEFILL) {
             double font_size = opts->font_size * 8.0;
             const char* symbol = element_to_symbol(atom->element);
-            char label[32];
+            char label[64];
+            char charge_str[8];
 
-            if (opts->show_hydrogens && atom->implicit_h_count > 0) {
+            format_charge_string(atom->charge, charge_str, sizeof(charge_str));
+
+            /* Heteroatoms should always show their H */
+            bool is_heteroatom = (atom->element != ELEM_C && atom->element != ELEM_H);
+            bool show_h = (is_heteroatom && atom->implicit_h_count > 0) ||
+                          (opts->show_hydrogens && atom->implicit_h_count > 0);
+
+            if (show_h) {
                 if (atom->implicit_h_count == 1)
-                    snprintf(label, sizeof(label), "%sH", symbol);
+                    snprintf(label, sizeof(label), "%sH%s", symbol, charge_str);
                 else
-                    snprintf(label, sizeof(label), "%sH%d", symbol, atom->implicit_h_count);
+                    snprintf(label, sizeof(label), "%sH%d%s", symbol, atom->implicit_h_count, charge_str);
             } else {
-                snprintf(label, sizeof(label), "%s", symbol);
+                snprintf(label, sizeof(label), "%s%s", symbol, charge_str);
             }
 
             /* White text on colored sphere */
@@ -403,15 +485,23 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
 
     /* Default style: circle background */
     const char* symbol = element_to_symbol(atom->element);
-    char label[32];
+    char label[64];
+    char charge_str[8];
 
-    if (opts->show_hydrogens && atom->implicit_h_count > 0) {
+    format_charge_string(atom->charge, charge_str, sizeof(charge_str));
+
+    /* Heteroatoms should always show their H */
+    bool is_heteroatom = (atom->element != ELEM_C && atom->element != ELEM_H);
+    bool show_h = (is_heteroatom && atom->implicit_h_count > 0) ||
+                  (opts->show_hydrogens && atom->implicit_h_count > 0);
+
+    if (show_h) {
         if (atom->implicit_h_count == 1)
-            snprintf(label, sizeof(label), "%sH", symbol);
+            snprintf(label, sizeof(label), "%sH%s", symbol, charge_str);
         else
-            snprintf(label, sizeof(label), "%sH%d", symbol, atom->implicit_h_count);
+            snprintf(label, sizeof(label), "%sH%d%s", symbol, atom->implicit_h_count, charge_str);
     } else {
-        snprintf(label, sizeof(label), "%s", symbol);
+        snprintf(label, sizeof(label), "%s%s", symbol, charge_str);
     }
 
     double font_size = opts->font_size * 10.0;
@@ -442,7 +532,8 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
 /* Extended version that handles terminal carbons for modern style */
 static void render_atom_label_ex(cairo_t* cr, const molecule_t* mol, int atom_idx,
                                   point2d_t pos, const depictor_options_t* opts,
-                                  rgb_color_t bg, double base_scale) {
+                                  rgb_color_t bg, double base_scale,
+                                  const mol_coords_t* coords) {
     const atom_t* atom = &mol->atoms[atom_idx];
 
     bool show_sphere = (opts->render_style == RENDER_STYLE_BALLS_AND_STICKS ||
@@ -457,15 +548,24 @@ static void render_atom_label_ex(cairo_t* cr, const molecule_t* mol, int atom_id
             opts->render_style != RENDER_STYLE_SPACEFILL) {
             double font_size = opts->font_size * 8.0;
             const char* symbol = element_to_symbol(atom->element);
-            char label[32];
+            char label[64];
+            char charge_str[8];
 
-            if (opts->show_hydrogens && atom->implicit_h_count > 0) {
+            /* Format charge string */
+            format_charge_string(atom->charge, charge_str, sizeof(charge_str));
+
+            /* Heteroatoms should always show their H */
+            bool is_heteroatom = (atom->element != ELEM_C && atom->element != ELEM_H);
+            bool show_h = (is_heteroatom && atom->implicit_h_count > 0) ||
+                          (opts->show_hydrogens && atom->implicit_h_count > 0);
+
+            if (show_h) {
                 if (atom->implicit_h_count == 1)
-                    snprintf(label, sizeof(label), "%sH", symbol);
+                    snprintf(label, sizeof(label), "%sH%s", symbol, charge_str);
                 else
-                    snprintf(label, sizeof(label), "%sH%d", symbol, atom->implicit_h_count);
+                    snprintf(label, sizeof(label), "%sH%d%s", symbol, atom->implicit_h_count, charge_str);
             } else {
-                snprintf(label, sizeof(label), "%s", symbol);
+                snprintf(label, sizeof(label), "%s%s", symbol, charge_str);
             }
 
             cairo_set_source_rgb(cr, 1, 1, 1);
@@ -477,7 +577,7 @@ static void render_atom_label_ex(cairo_t* cr, const molecule_t* mol, int atom_id
     if (!should_show_label_ex(atom, opts, mol, atom_idx)) return;
 
     if (opts->style_preset == DEPICT_STYLE_MODERN) {
-        render_atom_label_modern(cr, atom, pos, opts, bg);
+        render_atom_label_modern_ex(cr, atom, pos, opts, bg, mol, atom_idx, coords);
         return;
     }
 
@@ -1031,7 +1131,7 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
     /* Atom labels/spheres - use extended version for modern style */
     for (int i = 0; i < mol->num_atoms; i++) {
         render_atom_label_ex(ctx->cr, mol, i, coords->coords_2d[i],
-                            opts, ctx->background, base_scale);
+                            opts, ctx->background, base_scale, coords);
     }
 
     return CCHEM_OK;
