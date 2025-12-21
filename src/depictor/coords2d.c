@@ -11,10 +11,15 @@
 #include "cchem/depictor/coords2d.h"
 #include "cchem/depictor/types.h"
 #include "cchem/canonicalizer/bond.h"
+#include "cchem/canonicalizer/element.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdbool.h>
+#include <stdio.h>
+
+/* Debug flag - set to 1 to enable debug output */
+#define COORDS2D_DEBUG 0
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -307,6 +312,58 @@ static bool place_fused_ring(const ring_t* ring, const molecule_t* mol,
 
 /* ============== Chain Placement ============== */
 
+/* Trace a chain from a starting chain atom to find if it connects to another ring.
+ * Returns the ring atom index at the other end, or -1 if chain is terminal.
+ * Also returns the length of the chain in *chain_length if not NULL. */
+static int trace_chain_to_ring(const molecule_t* mol, int start_chain_atom,
+                                int from_ring_atom, int* chain_length) {
+    if (chain_length) *chain_length = 0;
+
+    int curr = start_chain_atom;
+    int prev = from_ring_atom;
+    int length = 1;
+
+    while (true) {
+        const atom_t* atom = &mol->atoms[curr];
+        int next = -1;
+
+        for (int i = 0; i < atom->num_neighbors; i++) {
+            int nb = atom->neighbors[i];
+            if (nb == prev) continue;
+
+            if (mol->atoms[nb].ring_count > 0) {
+                /* Found a ring at the other end */
+                if (chain_length) *chain_length = length;
+                return nb;
+            }
+
+            if (mol->atoms[nb].ring_count == 0) {
+                /* Continue along chain */
+                if (next < 0) {
+                    next = nb;
+                }
+                /* If multiple chain neighbors, take the first non-prev one */
+            }
+        }
+
+        if (next < 0) {
+            /* Chain is terminal (no more chain atoms) */
+            if (chain_length) *chain_length = length;
+            return -1;
+        }
+
+        prev = curr;
+        curr = next;
+        length++;
+
+        /* Safety: prevent infinite loop in case of cycles */
+        if (length > mol->num_atoms) {
+            if (chain_length) *chain_length = length;
+            return -1;
+        }
+    }
+}
+
 static void place_chain_atoms(const molecule_t* mol, point2d_t* coords,
                                bool* placed, double bond_length) {
     int* queue = malloc(mol->num_atoms * sizeof(int));
@@ -420,6 +477,31 @@ static void place_chain_atoms(const molecule_t* mol, point2d_t* coords,
             /* Skip atoms that are in rings - they should be placed with ring geometry */
             if (mol->atoms[nb].ring_count > 0) continue;
 
+            /* If current atom is in a ring and nb is a chain atom, check if this chain
+             * connects to another ring. If so, only the lower-indexed ring atom should
+             * start placing the chain to ensure consistent zigzag direction. */
+            if (mol->atoms[curr].ring_count > 0) {
+                /* Trace the chain starting from nb to find if it connects to another ring */
+                int other_ring_atom = trace_chain_to_ring(mol, nb, curr, NULL);
+
+                if (other_ring_atom >= 0) {
+                    /* Chain connects two rings. Only the lower-indexed ring atom
+                     * should place the chain to ensure consistent zigzag. */
+                    #if COORDS2D_DEBUG
+                    fprintf(stderr, "DEBUG: Chain %d->%d connects to ring atom %d (curr=%d)\n",
+                            curr, nb, other_ring_atom, curr);
+                    #endif
+                    if (curr > other_ring_atom) {
+                        /* The other ring atom has lower index - let it handle this chain */
+                        #if COORDS2D_DEBUG
+                        fprintf(stderr, "DEBUG: Skipping chain %d->%d (deferring to atom %d)\n",
+                                curr, nb, other_ring_atom);
+                        #endif
+                        continue;
+                    }
+                }
+            }
+
             double angle;
 
             if (n_angles == 0) {
@@ -436,11 +518,72 @@ static void place_chain_atoms(const molecule_t* mol, point2d_t* coords,
                     angle = angles[0] + M_PI;
                     chain_dir[nb] = 0;  /* No zigzag propagation */
                 } else {
-                    /* Zigzag: place at 120° from incoming direction */
+                    /* Zigzag: place at 120° internal angle (60° offset) from incoming */
                     int dir = -chain_dir[curr];
                     if (dir == 0) dir = 1;
-                    chain_dir[nb] = dir;
-                    angle = angles[0] + M_PI + dir * M_PI / 3.0;
+
+                    /* Check if nb has an already-placed neighbor (e.g., connecting to ring).
+                     * If so, we need to position nb so that BOTH the incoming bond (from curr)
+                     * and the outgoing bond (to the placed neighbor) form a proper zigzag. */
+                    const atom_t* nb_atom = &mol->atoms[nb];
+                    int placed_neighbor = -1;
+                    for (int k = 0; k < nb_atom->num_neighbors; k++) {
+                        int nb_nb = nb_atom->neighbors[k];
+                        if (nb_nb != curr && placed[nb_nb]) {
+                            placed_neighbor = nb_nb;
+                            break;
+                        }
+                    }
+
+                    if (placed_neighbor >= 0) {
+                        /* nb connects to an already-placed atom (likely a ring).
+                         * Calculate standard zigzag angle, then check if it would
+                         * create a near-parallel bond to the placed neighbor.
+                         * If so, flip the direction to create visible zigzag. */
+                        double standard_angle = angles[0] + M_PI + dir * M_PI / 3.0;
+
+                        /* Calculate what the angle to placed_neighbor would be */
+                        double nb_x = curr_pos.x + bond_length * cos(standard_angle);
+                        double nb_y = curr_pos.y + bond_length * sin(standard_angle);
+                        point2d_t placed_pos = coords[placed_neighbor];
+                        double out_angle = atan2(placed_pos.y - nb_y, placed_pos.x - nb_x);
+
+                        /* Normalize angles to [0, 2π] */
+                        double in_norm = fmod(standard_angle + 4 * M_PI, 2 * M_PI);
+                        double out_norm = fmod(out_angle + 4 * M_PI, 2 * M_PI);
+
+                        /* Check if incoming and outgoing would be nearly parallel
+                         * (within 30° of each other or 180° apart) */
+                        double angle_diff = fabs(in_norm - out_norm);
+                        if (angle_diff > M_PI) angle_diff = 2 * M_PI - angle_diff;
+
+                        bool nearly_parallel = (angle_diff < M_PI / 6.0) ||
+                                               (fabs(angle_diff - M_PI) < M_PI / 6.0);
+
+                        if (nearly_parallel) {
+                            /* Flip direction to create visible zigzag */
+                            dir = -dir;
+                            #if COORDS2D_DEBUG
+                            fprintf(stderr, "DEBUG: ZigzagFlip %d->%d->%d: was parallel (diff=%.1f°), flipping dir to %d\n",
+                                    curr, nb, placed_neighbor, angle_diff * 180.0 / M_PI, dir);
+                            #endif
+                        }
+
+                        chain_dir[nb] = dir;
+                        angle = angles[0] + M_PI + dir * M_PI / 3.0;
+                        #if COORDS2D_DEBUG
+                        fprintf(stderr, "DEBUG: Zigzag %d->%d: angles[0]=%.1f°, dir=%d, angle=%.1f°\n",
+                                curr, nb, angles[0] * 180.0 / M_PI, dir, angle * 180.0 / M_PI);
+                        #endif
+                    } else {
+                        /* Standard zigzag: no already-placed neighbor */
+                        chain_dir[nb] = dir;
+                        angle = angles[0] + M_PI + dir * M_PI / 3.0;
+                        #if COORDS2D_DEBUG
+                        fprintf(stderr, "DEBUG: Zigzag %d->%d: angles[0]=%.1f°, dir=%d, angle=%.1f°\n",
+                                curr, nb, angles[0] * 180.0 / M_PI, dir, angle * 180.0 / M_PI);
+                        #endif
+                    }
                 }
             }
             else {
@@ -467,14 +610,53 @@ static void place_chain_atoms(const molecule_t* mol, point2d_t* coords,
                 }
 
                 angle = angles[max_idx] + max_gap / 2.0;
-                /* Set chain_dir based on placement angle for consistent zigzag propagation */
+                /* Set chain_dir to create visible zigzag pattern.
+                 * For best visual results, we want the zigzag to alternate symmetrically
+                 * around the chain axis. The key is to start with a direction that
+                 * will create clear left-right alternation.
+                 *
+                 * We use quadrant-based logic:
+                 * - Q1 (0-90°): going up-right, zigzag should go down-right first (dir=-1)
+                 * - Q2 (90-180°): going up-left, zigzag should go down-left first (dir=1)
+                 * - Q3 (180-270°): going down-left, zigzag should go up-left first (dir=-1)
+                 * - Q4 (270-360°): going down-right, zigzag should go up-right first (dir=1)
+                 */
                 double norm_angle = fmod(angle + 2 * M_PI, 2 * M_PI);
-                chain_dir[nb] = (norm_angle > M_PI / 2 && norm_angle < 3 * M_PI / 2) ? -1 : 1;
+
+                /* Set chain_dir to create visible zigzag at chain start.
+                 * For angles near vertical (up or down), we want the first
+                 * zigzag to go more horizontal. For angles near horizontal,
+                 * standard alternation works. */
+                double vert = fabs(sin(norm_angle));  /* How vertical is this angle */
+
+                if (vert > 0.5) {
+                    /* Mostly vertical - zigzag should go more horizontal.
+                     * For up-left (Q2) or down-right (Q4): use dir=1 to go right
+                     * For up-right (Q1) or down-left (Q3): use dir=-1 to go left */
+                    if ((norm_angle >= M_PI/2 && norm_angle < M_PI) ||
+                        (norm_angle >= 3*M_PI/2)) {
+                        chain_dir[nb] = -1;  /* Will create rightward zigzag */
+                    } else {
+                        chain_dir[nb] = 1;   /* Will create leftward zigzag */
+                    }
+                } else {
+                    /* Mostly horizontal - standard alternation */
+                    chain_dir[nb] = (norm_angle > M_PI) ? 1 : -1;
+                }
+                #if COORDS2D_DEBUG
+                fprintf(stderr, "DEBUG: LargestGap %d->%d: angle=%.1f°, norm_angle=%.1f°, chain_dir=%d\n",
+                        curr, nb, angle * 180.0 / M_PI, norm_angle * 180.0 / M_PI, chain_dir[nb]);
+                #endif
             }
 
             coords[nb].x = curr_pos.x + bond_length * cos(angle);
             coords[nb].y = curr_pos.y + bond_length * sin(angle);
             placed[nb] = true;
+            #if COORDS2D_DEBUG
+            fprintf(stderr, "DEBUG: Placed atom %d (%s) at (%.2f, %.2f) from atom %d (%s) at (%.2f, %.2f), angle=%.1f°\n",
+                    nb, element_to_symbol(mol->atoms[nb].element), coords[nb].x, coords[nb].y,
+                    curr, element_to_symbol(mol->atoms[curr].element), curr_pos.x, curr_pos.y, angle * 180.0 / M_PI);
+            #endif
 
             if (n_angles < 20) {
                 angles[n_angles++] = angle;
@@ -693,8 +875,34 @@ mol_coords_t* coords2d_generate(const molecule_t* mol, const coords2d_options_t*
                                 double len = point2d_length(sum);
                                 if (len > 0.01) {
                                     double base_angle = atan2(-sum.y, -sum.x);
-                                    /* No zigzag for ring placement - zigzag is only for chain atoms.
-                                     * Rings should be placed directly away from existing substituents. */
+                                    /* Only add zigzag offset when this ring is at the end of a
+                                     * chain that connects to ANOTHER ring. Terminal substituent
+                                     * rings (like cyclopropyl) should be placed straight. */
+                                    if (mol->atoms[placed_neighbor].ring_count == 0) {
+                                        /* Check if chain from placed_neighbor leads to another ring
+                                         * through a proper chain (at least 2 atoms). Direct ring
+                                         * attachments (like C=O to ring) should not trigger zigzag. */
+                                        bool connects_via_chain = false;
+                                        const atom_t* pn_atom = &mol->atoms[placed_neighbor];
+                                        for (int k = 0; k < pn_atom->num_neighbors; k++) {
+                                            int pn_nb = pn_atom->neighbors[k];
+                                            if (pn_nb == anchor_atom) continue;
+                                            if (mol->atoms[pn_nb].ring_count > 0) continue; /* Skip direct ring connections */
+                                            /* Trace from this chain neighbor to see if it leads to a ring */
+                                            int chain_len = 0;
+                                            int other_ring = trace_chain_to_ring(mol, pn_nb, placed_neighbor, &chain_len);
+                                            if (other_ring >= 0 && chain_len >= 2) {
+                                                connects_via_chain = true;
+                                                break;
+                                            }
+                                        }
+                                        if (connects_via_chain) {
+                                            double offset = M_PI / 3.0;  /* 60° zigzag offset */
+                                            /* Alternate offset direction based on anchor atom index */
+                                            if (anchor_atom % 2 == 0) offset = -offset;
+                                            base_angle += offset;
+                                        }
+                                    }
                                     away_dir.x = cos(base_angle);
                                     away_dir.y = sin(base_angle);
                                 }
