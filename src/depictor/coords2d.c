@@ -381,13 +381,18 @@ static void place_chain_atoms(const molecule_t* mol, point2d_t* coords,
                 }
             }
             if (main_nb >= 0 && side_nb >= 0) {
-                /* Place main chain at 180° (opposite incoming) for straighter chain */
+                /* For sp2 centers (carbonyl), continue zigzag for main chain, place O perpendicular */
                 double incoming = angles[0];
-                double main_angle = incoming + M_PI;
-                /* Place side substituent perpendicular (120° from main = 60° from incoming) */
                 int dir = -chain_dir[curr];
-                if (dir == 0) dir = 1;
-                double side_angle = incoming + M_PI + dir * 2.0 * M_PI / 3.0;
+                if (dir == 0) {
+                    /* When coming from ring or largest-gap placement, determine dir from geometry */
+                    double norm_incoming = fmod(incoming + 2 * M_PI, 2 * M_PI);
+                    dir = (norm_incoming > M_PI / 2 && norm_incoming < 3 * M_PI / 2) ? 1 : -1;
+                }
+                /* Main chain continues zigzag at 120° (same as normal chain placement) */
+                double main_angle = incoming + M_PI + dir * M_PI / 3.0;
+                /* Carbonyl O goes opposite side at 120° from main (perpendicular to chain) */
+                double side_angle = incoming + M_PI - dir * M_PI / 3.0;
 
                 coords[main_nb].x = curr_pos.x + bond_length * cos(main_angle);
                 coords[main_nb].y = curr_pos.y + bond_length * sin(main_angle);
@@ -462,6 +467,9 @@ static void place_chain_atoms(const molecule_t* mol, point2d_t* coords,
                 }
 
                 angle = angles[max_idx] + max_gap / 2.0;
+                /* Set chain_dir based on placement angle for consistent zigzag propagation */
+                double norm_angle = fmod(angle + 2 * M_PI, 2 * M_PI);
+                chain_dir[nb] = (norm_angle > M_PI / 2 && norm_angle < 3 * M_PI / 2) ? -1 : 1;
             }
 
             coords[nb].x = curr_pos.x + bond_length * cos(angle);
@@ -685,34 +693,8 @@ mol_coords_t* coords2d_generate(const molecule_t* mol, const coords2d_options_t*
                                 double len = point2d_length(sum);
                                 if (len > 0.01) {
                                     double base_angle = atan2(-sum.y, -sum.x);
-                                    /* Only add zigzag for simple chain atoms */
-                                    /* Skip zigzag for: ring atoms, and carbonyl-like atoms (has terminal O/S) */
-                                    bool skip_zigzag = (nb_atom->ring_count > 0);
-                                    if (!skip_zigzag) {
-                                        /* Check if this is carbonyl-like (has terminal O or S) */
-                                        for (int k = 0; k < nb_atom->num_neighbors; k++) {
-                                            int other = nb_atom->neighbors[k];
-                                            const atom_t* other_atom = &mol->atoms[other];
-                                            if (other_atom->element == ELEM_O || other_atom->element == ELEM_S) {
-                                                /* Check if terminal */
-                                                int heavy = 0;
-                                                for (int m = 0; m < other_atom->num_neighbors; m++) {
-                                                    if (mol->atoms[other_atom->neighbors[m]].element != ELEM_H) heavy++;
-                                                }
-                                                if (heavy <= 1) {
-                                                    skip_zigzag = true;
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if (!skip_zigzag) {
-                                        /* Chain atom - add 60° zigzag offset */
-                                        double zigzag_offset = M_PI / 3.0;  /* 60 degrees */
-                                        /* Alternate direction based on anchor atom index */
-                                        if (anchor_atom % 2 == 0) zigzag_offset = -zigzag_offset;
-                                        base_angle += zigzag_offset;
-                                    }
+                                    /* No zigzag for ring placement - zigzag is only for chain atoms.
+                                     * Rings should be placed directly away from existing substituents. */
                                     away_dir.x = cos(base_angle);
                                     away_dir.y = sin(base_angle);
                                 }
