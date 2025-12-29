@@ -23,7 +23,7 @@
 #include "cchem/utils/threading.h"
 #include "cchem/utils/memory.h"
 #include "cchem/depictor/depictor.h"
-#include "cchem/utils/splitter.h"
+#include "cchem/splitter/splitter.h"
 
 #define VERSION "1.0.0"
 

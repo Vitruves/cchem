@@ -31,16 +31,19 @@ static void print_usage(const char* prog_name) {
 }
 
 int main(int argc, char* argv[]) {
+    const char* prog_name = argv[0];
+
     if (argc < 2) {
-        print_usage(argv[0]);
+        print_usage(prog_name);
         return 1;
     }
 
     const char* command = argv[1];
 
-    /* Shift arguments for subcommand parsing */
+    /* Shift arguments for subcommand parsing, but keep program name in argv[0] */
     argc--;
     argv++;
+    argv[0] = (char*)prog_name;
 
     if (strcmp(command, "canonicalize") == 0) {
         return cmd_canonicalize(argc, argv);
@@ -56,11 +59,11 @@ int main(int argc, char* argv[]) {
         print_version();
         return 0;
     } else if (strcmp(command, "help") == 0 || strcmp(command, "--help") == 0 || strcmp(command, "-h") == 0) {
-        print_usage(argv[0]);
+        print_usage(prog_name);
         return 0;
     } else {
         fprintf(stderr, "Unknown command: %s\n", command);
-        print_usage(argv[0]);
+        print_usage(prog_name);
         return 1;
     }
 }

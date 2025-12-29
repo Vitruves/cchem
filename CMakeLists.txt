@@ -215,7 +215,7 @@ set(CCHEM_SOURCES
     src/utils/threading.c
     src/utils/csv.c
     src/utils/progress.c
-    src/utils/splitter.c
+    src/splitter/splitter.c
     src/descriptors/registry.c
     src/descriptors/counts.c
     src/descriptors/logp.c

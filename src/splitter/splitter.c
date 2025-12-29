@@ -10,7 +10,7 @@
 #include <math.h>
 #include <unistd.h>
 
-#include "cchem/utils/splitter.h"
+#include "cchem/splitter/splitter.h"
 #include "cchem/cchem.h"
 #include "cchem/utils/csv.h"
 #include "cchem/utils/threading.h"
