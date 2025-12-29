@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include "cchem/cchem.h"
-#include "cchem/utils/csv.h"
 #include "cchem/utils/commands.h"
 
 static void print_version(void) {
@@ -81,30 +80,4 @@ cchem_status_t cchem_init(void) {
 }
 
 void cchem_cleanup(void) {
-}
-
-char* cchem_canonicalize(const char* smiles, char* error_buf, size_t error_buf_size) {
-    return smiles_canonicalize(smiles, NULL, error_buf, error_buf_size);
-}
-
-bool cchem_smiles_equal(const char* smiles1, const char* smiles2) {
-    return smiles_are_equivalent(smiles1, smiles2);
-}
-
-cchem_status_t cchem_validate_smiles(const char* smiles, char* error_buf, size_t error_buf_size) {
-    return smiles_validate(smiles, error_buf, error_buf_size);
-}
-
-cchem_status_t cchem_process_csv(const char* input_file, const char* output_file,
-                                 const char* smiles_column, const char* output_column,
-                                 int num_threads) {
-    csv_batch_context_t* ctx = csv_batch_context_create(
-        input_file, output_file, smiles_column, output_column, num_threads);
-
-    if (!ctx) return CCHEM_ERROR_MEMORY;
-
-    cchem_status_t status = csv_batch_canonicalize(ctx);
-    csv_batch_context_free(ctx);
-
-    return status;
 }

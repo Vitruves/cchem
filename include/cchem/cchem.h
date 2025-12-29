@@ -1,6 +1,13 @@
 /**
  * @file cchem.h
  * @brief Main header for cchem chemoinformatics library
+ *
+ * This is the umbrella header that includes all cchem functionality:
+ * - Canonicalizer: SMILES parsing, canonicalization, and writing
+ * - Descriptors: Molecular descriptor computation
+ * - Depictor: 2D/3D molecular structure visualization
+ * - Splitter: Dataset splitting for ML workflows
+ * - Utilities: CSV processing, threading, progress bars
  */
 
 #ifndef CCHEM_H
@@ -21,71 +28,65 @@
 #include "canonicalizer/smiles_writer.h"
 #include "canonicalizer/sanitize.h"
 
+/* Molecular descriptors */
+#include "utils/descriptors.h"
+
+/* Molecular depiction (2D/3D rendering) */
+#include "depictor/depictor.h"
+
+/* Dataset splitting */
+#include "splitter/splitter.h"
+
 /* Utilities */
 #include "utils/csv.h"
 #include "utils/progress.h"
 #include "utils/threading.h"
 #include "utils/memory.h"
 
-/* Version information */
+/* ============================================================================
+ * Version Information
+ * ============================================================================ */
+
 #define CCHEM_VERSION_MAJOR 1
 #define CCHEM_VERSION_MINOR 0
 #define CCHEM_VERSION_PATCH 0
 #define CCHEM_VERSION_STRING "1.0.0"
 
-/* Get version string */
+/** @brief Get version string */
 const char* cchem_version(void);
 
-/* Initialize cchem library (call once at startup) */
+/** @brief Initialize cchem library (call once at startup) */
 cchem_status_t cchem_init(void);
 
-/* Cleanup cchem library (call once at shutdown) */
+/** @brief Cleanup cchem library (call once at shutdown) */
 void cchem_cleanup(void);
 
-/**
- * @brief Canonicalize a SMILES string
+/* ============================================================================
+ * Quick Reference - Main Functions by Module
+ * ============================================================================
  *
- * @param smiles Input SMILES string
- * @param error_buf Buffer for error message (can be NULL)
- * @param error_buf_size Size of error buffer
- * @return Canonical SMILES string (caller must free) or NULL on error
- */
-char* cchem_canonicalize(const char* smiles, char* error_buf, size_t error_buf_size);
-
-/**
- * @brief Check if two SMILES represent the same molecule
+ * CANONICALIZER (canonicalizer/canon.h, canonicalizer/parser.h):
+ *   smiles_canonicalize()     - Canonicalize SMILES string
+ *   smiles_to_molecule()      - Parse SMILES to molecule
+ *   smiles_validate()         - Validate SMILES syntax
+ *   smiles_are_equivalent()   - Check if two SMILES are equivalent
+ *   molecule_to_smiles()      - Convert molecule to SMILES
  *
- * @param smiles1 First SMILES string
- * @param smiles2 Second SMILES string
- * @return true if equivalent, false otherwise
- */
-bool cchem_smiles_equal(const char* smiles1, const char* smiles2);
-
-/**
- * @brief Validate a SMILES string
+ * DESCRIPTORS (utils/descriptors.h):
+ *   descriptors_init()        - Initialize descriptor registry
+ *   descriptor_get()          - Get descriptor by name
+ *   descriptors_compute_all() - Compute all descriptors for molecule
  *
- * @param smiles SMILES string to validate
- * @param error_buf Buffer for error message (can be NULL)
- * @param error_buf_size Size of error buffer
- * @return CCHEM_OK if valid, error code otherwise
- */
-cchem_status_t cchem_validate_smiles(const char* smiles,
-                                     char* error_buf, size_t error_buf_size);
-
-/**
- * @brief Process CSV file with parallel canonicalization
+ * DEPICTOR (depictor/depictor.h):
+ *   depict_smiles()           - Render SMILES to image file
+ *   depict_molecule()         - Render molecule to image file
  *
- * @param input_file Input CSV file path
- * @param output_file Output CSV file path
- * @param smiles_column Name of column containing SMILES
- * @param output_column Name of column for canonical SMILES
- * @param num_threads Number of threads to use (0 = auto)
- * @return CCHEM_OK on success, error code otherwise
+ * SPLITTER (splitter/splitter.h):
+ *   splitter_split_csv()      - Split CSV dataset
+ *
+ * CSV PROCESSING (utils/csv.h):
+ *   csv_batch_context_create() - Create batch processing context
+ *   csv_batch_canonicalize()   - Batch canonicalize CSV file
  */
-cchem_status_t cchem_process_csv(const char* input_file,
-                                 const char* output_file,
-                                 const char* smiles_column,
-                                 const char* output_column,
-                                 int num_threads);
 
 #endif /* CCHEM_H */

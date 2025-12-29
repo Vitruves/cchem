@@ -359,7 +359,7 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
     if (!smiles || !filename) return CCHEM_ERROR_INVALID_INPUT;
 
     /* Canonicalize input SMILES first for consistent depiction */
-    char* canonical = cchem_canonicalize(smiles, error_buf, error_buf_size);
+    char* canonical = smiles_canonicalize(smiles, NULL, error_buf, error_buf_size);
     if (!canonical) {
         return CCHEM_ERROR_PARSE;
     }

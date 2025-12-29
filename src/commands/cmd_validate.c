@@ -51,7 +51,7 @@ int cmd_validate(int argc, char* argv[]) {
     }
 
     char error_buf[256];
-    cchem_status_t status = cchem_validate_smiles(smiles, error_buf, sizeof(error_buf));
+    cchem_status_t status = smiles_validate(smiles, error_buf, sizeof(error_buf));
 
     if (status == CCHEM_OK) {
         if (verbose) {
