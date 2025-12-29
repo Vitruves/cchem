@@ -11,7 +11,7 @@
 
 static void print_version(void) {
     printf("cchem version %s\n", VERSION);
-    printf("SMILES canonicalization tool\n");
+    printf("High-performance chemistry library written in pure C\n");
 }
 
 static void print_usage(const char* prog_name) {
