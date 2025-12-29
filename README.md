@@ -1,5 +1,7 @@
 # cchem
 
+<img width="197" height="168" alt="cchem_logo" src="https://github.com/user-attachments/assets/461c8341-390e-4568-a803-a4137342f2b8" />
+
 High-performance cheminformatics library written in pure C.
 
 **Key Features:**
