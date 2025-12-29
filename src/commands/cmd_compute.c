@@ -10,21 +10,26 @@ void print_compute_usage(const char* prog_name) {
     printf("Compute molecular descriptors from SMILES\n\n");
     printf("Options:\n");
     printf("  -S, --smiles <SMILES>       Single SMILES string\n");
-    printf("  -f, --file <file.csv>       Input CSV file\n");
+    printf("  -f, --file <file>           Input file (CSV or Parquet)\n");
     printf("  -s, --col <name>            Input SMILES column name (required with -f)\n");
     printf("  -d, --descriptors <list>    Comma-separated descriptor names or \"all\" (default: all)\n");
-    printf("  -o, --output <file.csv>     Output CSV file (required with -f)\n");
+    printf("  -o, --output <file>         Output file (CSV or Parquet, required with -f)\n");
     printf("  -n, --ncpu <N>              Number of CPU cores (default: auto)\n");
     printf("  --no-canonicalization       Skip canonicalization, parse input SMILES directly (faster)\n");
     printf("  -l, --list                  List available descriptors\n");
     printf("  -v, --verbose               Verbose output\n");
     printf("  -h, --help                  Print this help message\n");
     printf("\n");
+    printf("Supported file formats:\n");
+    printf("  .csv                        Comma-separated values\n");
+    printf("  .parquet, .pq               Apache Parquet (requires matching output format)\n");
+    printf("\n");
     printf("Examples:\n");
     printf("  %s compute -S \"CCO\" -d CarbonCount,HydrogenCount\n", prog_name);
     printf("  %s compute -S \"c1ccccc1\" -d all\n", prog_name);
     printf("  %s compute -f input.csv -s smiles -d CarbonCount,RingCount -o output.csv\n", prog_name);
     printf("  %s compute -f input.csv -s smiles -d all -o out.csv --no-canonicalization\n", prog_name);
+    printf("  %s compute -f input.parquet -s smiles -d all -o output.parquet\n", prog_name);
     printf("  %s compute --list\n", prog_name);
 }
 
@@ -335,6 +340,813 @@ static void* pipeline_writer_thread(void* arg) {
 
     return NULL;
 }
+
+/* ============================================================================
+ * CSV to Parquet Pipeline Compute
+ * ============================================================================ */
+
+#ifdef HAVE_PARQUET
+
+/* CSV to Parquet pipeline context */
+typedef struct {
+    /* Input */
+    csv_mmap_reader_t* reader;
+    int smiles_col_idx;
+    int num_input_fields;
+    char** header_fields;
+
+    /* Output */
+    parquet_writer_t* writer;
+    char** desc_names;
+    int num_descs;
+
+    /* Queues */
+    bounded_queue_t* input_queue;
+    bounded_queue_t* output_queue;
+
+    /* Threads */
+    pthread_t reader_thread;
+    pthread_t writer_thread;
+    pthread_t* worker_threads;
+    int num_workers;
+
+    /* Progress */
+    atomic_size_t rows_read;
+    atomic_size_t rows_processed;
+    atomic_size_t rows_written;
+    size_t total_rows;
+
+    /* Control */
+    bool skip_canon;
+    char delimiter;
+} csv_to_pq_ctx_t;
+
+/* CSV reader thread for csv-to-parquet */
+static void* csv_to_pq_reader_thread(void* arg) {
+    csv_to_pq_ctx_t* ctx = (csv_to_pq_ctx_t*)arg;
+
+    size_t line_len;
+    const char* line;
+    int row_idx = 0;
+    const char* fields[256];
+
+    while ((line = csv_mmap_reader_next_line(ctx->reader, &line_len))) {
+        int nfields = csv_mmap_parse_line(line, line_len, ctx->delimiter, fields, 256);
+
+        work_item_t* item = (work_item_t*)malloc(sizeof(work_item_t));
+        if (!item) continue;
+
+        item->row_idx = row_idx++;
+        item->num_original_fields = nfields;
+
+        /* Copy SMILES string */
+        if (ctx->smiles_col_idx < nfields && fields[ctx->smiles_col_idx]) {
+            item->smiles = strdup(fields[ctx->smiles_col_idx]);
+        } else {
+            item->smiles = strdup("");
+        }
+
+        /* Copy all original fields */
+        item->original_fields = (char**)calloc(nfields, sizeof(char*));
+        if (item->original_fields) {
+            for (int i = 0; i < nfields; i++) {
+                item->original_fields[i] = fields[i] ? strdup(fields[i]) : strdup("");
+            }
+        }
+
+        if (!queue_push(ctx->input_queue, item)) {
+            work_item_free(item);
+            break;
+        }
+        atomic_fetch_add(&ctx->rows_read, 1);
+    }
+
+    queue_close(ctx->input_queue);
+    return NULL;
+}
+
+/* Worker thread for csv-to-parquet (reuses work_item_t and result_item_t) */
+static void* csv_to_pq_worker_thread(void* arg) {
+    csv_to_pq_ctx_t* ctx = (csv_to_pq_ctx_t*)arg;
+
+    molecule_t* tl_mol = molecule_create_with_capacity(256, 256);
+
+    const descriptor_def_t* cached_defs[MAX_DESCRIPTORS];
+    int cached_num_defs = descriptor_get_all(cached_defs, MAX_DESCRIPTORS);
+    int cached_total = descriptor_count();
+    bool compute_all = (ctx->num_descs >= cached_total);
+
+    char error_buf[256];
+    work_item_t* item;
+
+    while ((item = (work_item_t*)queue_pop(ctx->input_queue)) != NULL) {
+        int out_num_fields = item->num_original_fields + ctx->num_descs;
+        result_item_t* result = (result_item_t*)malloc(sizeof(result_item_t));
+        if (!result) {
+            work_item_free(item);
+            continue;
+        }
+
+        result->row_idx = item->row_idx;
+        result->num_fields = out_num_fields;
+        result->output_fields = (char**)calloc(out_num_fields, sizeof(char*));
+        result->success = false;
+
+        if (!result->output_fields) {
+            result_item_free(result);
+            work_item_free(item);
+            continue;
+        }
+
+        /* Copy original fields */
+        for (int i = 0; i < item->num_original_fields; i++) {
+            result->output_fields[i] = item->original_fields[i] ?
+                                       strdup(item->original_fields[i]) : strdup("");
+        }
+
+        /* Compute descriptors */
+        molecule_t* mol = NULL;
+        cchem_status_t status;
+
+        if (item->smiles && item->smiles[0] != '\0') {
+            if (ctx->skip_canon) {
+                status = smiles_to_molecule_reuse(tl_mol, item->smiles, error_buf, sizeof(error_buf));
+                mol = (status == CCHEM_OK) ? tl_mol : NULL;
+            } else {
+                char* canonical = smiles_canonicalize(item->smiles, NULL, error_buf, sizeof(error_buf));
+                if (canonical) {
+                    status = smiles_to_molecule_reuse(tl_mol, canonical, error_buf, sizeof(error_buf));
+                    mol = (status == CCHEM_OK) ? tl_mol : NULL;
+                    free(canonical);
+                }
+            }
+        }
+
+        if (mol) {
+            result->success = true;
+
+            if (compute_all) {
+                descriptor_value_t all_values[MAX_DESCRIPTORS];
+                int num_computed = descriptors_compute_all(mol, NULL, all_values, MAX_DESCRIPTORS);
+
+                int n = (ctx->num_descs < num_computed) ? ctx->num_descs : num_computed;
+                if (n > cached_num_defs) n = cached_num_defs;
+
+                for (int i = 0; i < n; i++) {
+                    char val_buf[DESC_VALUE_WIDTH];
+                    if (cached_defs[i] == NULL) {
+                        strcpy(val_buf, "0");
+                    } else if (cached_defs[i]->value_type == DESC_VALUE_INT) {
+                        fast_i64toa(all_values[i].i, val_buf, DESC_VALUE_WIDTH);
+                    } else {
+                        fast_dtoa(all_values[i].d, val_buf, DESC_VALUE_WIDTH);
+                    }
+                    result->output_fields[item->num_original_fields + i] = strdup(val_buf);
+                }
+                for (int i = n; i < ctx->num_descs; i++) {
+                    result->output_fields[item->num_original_fields + i] = strdup("0");
+                }
+            } else {
+                for (int i = 0; i < ctx->num_descs; i++) {
+                    char val_buf[DESC_VALUE_WIDTH];
+                    strcpy(val_buf, "0");
+
+                    const descriptor_def_t* def = descriptor_get(ctx->desc_names[i]);
+                    if (def) {
+                        descriptor_value_t value;
+                        memset(&value, 0, sizeof(value));
+                        if (def->compute(mol, &value) == CCHEM_OK) {
+                            if (def->value_type == DESC_VALUE_INT) {
+                                fast_i64toa(value.i, val_buf, DESC_VALUE_WIDTH);
+                            } else {
+                                fast_dtoa(value.d, val_buf, DESC_VALUE_WIDTH);
+                            }
+                        }
+                    }
+                    result->output_fields[item->num_original_fields + i] = strdup(val_buf);
+                }
+            }
+        } else {
+            for (int i = 0; i < ctx->num_descs; i++) {
+                result->output_fields[item->num_original_fields + i] = strdup("0");
+            }
+        }
+
+        atomic_fetch_add(&ctx->rows_processed, 1);
+
+        if (!queue_push(ctx->output_queue, result)) {
+            result_item_free(result);
+        }
+
+        work_item_free(item);
+    }
+
+    molecule_free(tl_mol);
+    return NULL;
+}
+
+/* Parquet writer thread for csv-to-parquet */
+static void* csv_to_pq_writer_thread(void* arg) {
+    csv_to_pq_ctx_t* ctx = (csv_to_pq_ctx_t*)arg;
+
+    result_item_t* result;
+
+    while ((result = (result_item_t*)queue_pop(ctx->output_queue)) != NULL) {
+        parquet_writer_write_row(ctx->writer,
+                                  (const char**)result->output_fields,
+                                  result->num_fields);
+        atomic_fetch_add(&ctx->rows_written, 1);
+        result_item_free(result);
+    }
+
+    return NULL;
+}
+
+/* CSV to Parquet pipeline compute */
+static int cmd_compute_csv_to_parquet_pipeline(const char* input_file, const char* output_file,
+                                                const char* input_col, char** desc_names,
+                                                int num_descs, int ncpu, bool skip_canon, bool verbose) {
+    csv_to_pq_ctx_t ctx = {0};
+    ctx.delimiter = ',';
+    ctx.skip_canon = skip_canon;
+    ctx.desc_names = desc_names;
+    ctx.num_descs = num_descs;
+
+    /* Count total rows for progress */
+    ctx.total_rows = csv_count_rows(input_file);
+    if (ctx.total_rows <= 1) {
+        fprintf(stderr, "Error: Input file is empty or has only header\n");
+        return 1;
+    }
+    ctx.total_rows--;  /* Exclude header */
+
+    /* Create mmap reader */
+    ctx.reader = csv_mmap_reader_create(input_file);
+    if (!ctx.reader) {
+        fprintf(stderr, "Error: Failed to open input file: %s\n", input_file);
+        return 1;
+    }
+
+    /* Read and parse header */
+    size_t header_len;
+    const char* header_line = csv_mmap_reader_next_line(ctx.reader, &header_len);
+    if (!header_line) {
+        fprintf(stderr, "Error: Failed to read header\n");
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+
+    const char* header_fields[256];
+    ctx.num_input_fields = csv_mmap_parse_line(header_line, header_len, ctx.delimiter, header_fields, 256);
+
+    /* Find SMILES column */
+    ctx.smiles_col_idx = -1;
+    for (int i = 0; i < ctx.num_input_fields; i++) {
+        if (strcmp(header_fields[i], input_col) == 0) {
+            ctx.smiles_col_idx = i;
+            break;
+        }
+    }
+    if (ctx.smiles_col_idx < 0) {
+        fprintf(stderr, "Error: Column '%s' not found in input file\n", input_col);
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Copy header field names */
+    ctx.header_fields = (char**)calloc(ctx.num_input_fields, sizeof(char*));
+    for (int i = 0; i < ctx.num_input_fields; i++) {
+        ctx.header_fields[i] = strdup(header_fields[i]);
+    }
+
+    /* Build output column names and types (original columns + descriptor columns) */
+    int num_output_cols = ctx.num_input_fields + num_descs;
+    char** output_col_names = (char**)calloc(num_output_cols, sizeof(char*));
+    parquet_col_type_t* output_col_types = (parquet_col_type_t*)calloc(num_output_cols, sizeof(parquet_col_type_t));
+    if (!output_col_names || !output_col_types) {
+        free(output_col_names);
+        free(output_col_types);
+        for (int i = 0; i < ctx.num_input_fields; i++) free(ctx.header_fields[i]);
+        free(ctx.header_fields);
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Original input columns are strings */
+    for (int i = 0; i < ctx.num_input_fields; i++) {
+        output_col_names[i] = strdup(ctx.header_fields[i]);
+        output_col_types[i] = PARQUET_COL_STRING;
+    }
+    /* Descriptor columns are doubles */
+    for (int i = 0; i < num_descs; i++) {
+        output_col_names[ctx.num_input_fields + i] = strdup(desc_names[i]);
+        output_col_types[ctx.num_input_fields + i] = PARQUET_COL_DOUBLE;
+    }
+
+    /* Create parquet writer with typed columns */
+    ctx.writer = parquet_writer_create(output_file,
+                                        (const char**)output_col_names,
+                                        output_col_types,
+                                        num_output_cols);
+    if (!ctx.writer) {
+        fprintf(stderr, "Error: Failed to create output parquet file: %s\n", output_file);
+        for (int i = 0; i < num_output_cols; i++) free(output_col_names[i]);
+        free(output_col_names);
+        free(output_col_types);
+        for (int i = 0; i < ctx.num_input_fields; i++) free(ctx.header_fields[i]);
+        free(ctx.header_fields);
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+    free(output_col_types);  /* Writer makes a copy */
+
+    /* Determine thread count */
+    ctx.num_workers = (ncpu > 0) ? ncpu : parallel_get_num_cores();
+
+    if (verbose) {
+        printf("CSV to Parquet pipeline mode: %zu molecules, %d workers\n", ctx.total_rows, ctx.num_workers);
+    }
+
+    /* Create bounded queues */
+    int queue_size = ctx.num_workers * 2;
+    ctx.input_queue = queue_create(queue_size);
+    ctx.output_queue = queue_create(queue_size);
+    if (!ctx.input_queue || !ctx.output_queue) {
+        fprintf(stderr, "Error: Failed to create queues\n");
+        if (ctx.input_queue) queue_free(ctx.input_queue);
+        if (ctx.output_queue) queue_free(ctx.output_queue);
+        parquet_writer_free(ctx.writer);
+        for (int i = 0; i < num_output_cols; i++) free(output_col_names[i]);
+        free(output_col_names);
+        for (int i = 0; i < ctx.num_input_fields; i++) free(ctx.header_fields[i]);
+        free(ctx.header_fields);
+        csv_mmap_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Initialize atomics */
+    atomic_store(&ctx.rows_read, 0);
+    atomic_store(&ctx.rows_processed, 0);
+    atomic_store(&ctx.rows_written, 0);
+
+    printf("Computing %d descriptors for %zu molecules (CSV -> Parquet)...\n", num_descs, ctx.total_rows);
+
+    /* Create progress bar */
+    progress_config_t prog_config = PROGRESS_CONFIG_DEFAULT;
+    prog_config.prefix = "Processing";
+    progress_t* progress = progress_create(ctx.total_rows, &prog_config);
+
+    /* Start reader thread */
+    pthread_create(&ctx.reader_thread, NULL, csv_to_pq_reader_thread, &ctx);
+
+    /* Start worker threads */
+    ctx.worker_threads = (pthread_t*)malloc(ctx.num_workers * sizeof(pthread_t));
+    for (int i = 0; i < ctx.num_workers; i++) {
+        pthread_create(&ctx.worker_threads[i], NULL, csv_to_pq_worker_thread, &ctx);
+    }
+
+    /* Start writer thread */
+    pthread_create(&ctx.writer_thread, NULL, csv_to_pq_writer_thread, &ctx);
+
+    /* Progress monitoring (main thread) */
+    while (atomic_load(&ctx.rows_written) < ctx.total_rows) {
+        size_t written = atomic_load(&ctx.rows_written);
+        progress_update(progress, written);
+        usleep(50000);
+    }
+
+    /* Wait for reader to finish */
+    pthread_join(ctx.reader_thread, NULL);
+
+    /* Wait for all workers to finish */
+    for (int i = 0; i < ctx.num_workers; i++) {
+        pthread_join(ctx.worker_threads[i], NULL);
+    }
+
+    /* Signal output queue EOF and wait for writer */
+    queue_close(ctx.output_queue);
+    pthread_join(ctx.writer_thread, NULL);
+
+    progress_finish(progress);
+    progress_free(progress);
+
+    /* Cleanup */
+    queue_free(ctx.input_queue);
+    queue_free(ctx.output_queue);
+    free(ctx.worker_threads);
+    parquet_writer_free(ctx.writer);
+    for (int i = 0; i < num_output_cols; i++) free(output_col_names[i]);
+    free(output_col_names);
+    for (int i = 0; i < ctx.num_input_fields; i++) free(ctx.header_fields[i]);
+    free(ctx.header_fields);
+    csv_mmap_reader_free(ctx.reader);
+
+    size_t rows_written = atomic_load(&ctx.rows_written);
+    fprintf(stderr, "\033[KProcessed: %zu/%zu (%.1f%% success)\n",
+           rows_written, ctx.total_rows,
+           ctx.total_rows > 0 ? (double)rows_written / ctx.total_rows * 100.0 : 0.0);
+    fprintf(stderr, "Output written to: %s\n", output_file);
+
+    return 0;
+}
+
+#endif /* HAVE_PARQUET */
+
+/* ============================================================================
+ * Parquet Pipeline Compute
+ * ============================================================================ */
+
+#ifdef HAVE_PARQUET
+
+/* Parquet pipeline context */
+typedef struct {
+    /* Input */
+    parquet_stream_reader_t* reader;
+    int smiles_col_idx;
+    int num_input_fields;
+
+    /* Output */
+    parquet_writer_t* writer;
+    char** desc_names;
+    int num_descs;
+
+    /* Queues */
+    bounded_queue_t* input_queue;
+    bounded_queue_t* output_queue;
+
+    /* Threads */
+    pthread_t reader_thread;
+    pthread_t writer_thread;
+    pthread_t* worker_threads;
+    int num_workers;
+
+    /* Progress */
+    atomic_size_t rows_read;
+    atomic_size_t rows_processed;
+    atomic_size_t rows_written;
+    size_t total_rows;
+
+    /* Control */
+    bool skip_canon;
+} pq_compute_ctx_t;
+
+/* Parquet reader thread for compute */
+static void* pq_compute_reader_thread(void* arg) {
+    pq_compute_ctx_t* ctx = (pq_compute_ctx_t*)arg;
+
+    const char* fields[256];
+    int row_idx = 0;
+
+    int nfields;
+    while ((nfields = parquet_stream_reader_next(ctx->reader, fields, 256)) > 0) {
+        work_item_t* item = (work_item_t*)malloc(sizeof(work_item_t));
+        if (!item) continue;
+
+        item->row_idx = row_idx++;
+        item->num_original_fields = nfields;
+
+        /* Copy SMILES */
+        if (ctx->smiles_col_idx < nfields && fields[ctx->smiles_col_idx]) {
+            item->smiles = strdup(fields[ctx->smiles_col_idx]);
+        } else {
+            item->smiles = strdup("");
+        }
+
+        /* Copy all original fields */
+        item->original_fields = (char**)calloc(nfields, sizeof(char*));
+        if (item->original_fields) {
+            for (int i = 0; i < nfields; i++) {
+                item->original_fields[i] = fields[i] ? strdup(fields[i]) : strdup("");
+            }
+        }
+
+        if (!queue_push(ctx->input_queue, item)) {
+            work_item_free(item);
+            break;
+        }
+        atomic_fetch_add(&ctx->rows_read, 1);
+    }
+
+    queue_close(ctx->input_queue);
+    return NULL;
+}
+
+/* Parquet worker thread for compute */
+static void* pq_compute_worker_thread(void* arg) {
+    pq_compute_ctx_t* ctx = (pq_compute_ctx_t*)arg;
+
+    /* Thread-local molecule for reuse */
+    molecule_t* tl_mol = molecule_create_with_capacity(256, 256);
+
+    /* Cache descriptor definitions */
+    const descriptor_def_t* cached_defs[MAX_DESCRIPTORS];
+    int cached_num_defs = descriptor_get_all(cached_defs, MAX_DESCRIPTORS);
+    int cached_total = descriptor_count();
+    bool compute_all = (ctx->num_descs >= cached_total);
+
+    char error_buf[256];
+    work_item_t* item;
+
+    while ((item = (work_item_t*)queue_pop(ctx->input_queue)) != NULL) {
+        /* Create result with all fields */
+        int out_num_fields = item->num_original_fields + ctx->num_descs;
+        result_item_t* result = (result_item_t*)malloc(sizeof(result_item_t));
+        if (!result) {
+            work_item_free(item);
+            continue;
+        }
+
+        result->row_idx = item->row_idx;
+        result->num_fields = out_num_fields;
+        result->output_fields = (char**)calloc(out_num_fields, sizeof(char*));
+        result->success = false;
+
+        if (!result->output_fields) {
+            result_item_free(result);
+            work_item_free(item);
+            continue;
+        }
+
+        /* Copy original fields */
+        for (int i = 0; i < item->num_original_fields; i++) {
+            result->output_fields[i] = item->original_fields[i] ?
+                                       strdup(item->original_fields[i]) : strdup("");
+        }
+
+        /* Compute descriptors */
+        molecule_t* mol = NULL;
+        cchem_status_t status;
+
+        if (item->smiles && item->smiles[0] != '\0') {
+            if (ctx->skip_canon) {
+                status = smiles_to_molecule_reuse(tl_mol, item->smiles, error_buf, sizeof(error_buf));
+                mol = (status == CCHEM_OK) ? tl_mol : NULL;
+            } else {
+                char* canonical = smiles_canonicalize(item->smiles, NULL, error_buf, sizeof(error_buf));
+                if (canonical) {
+                    status = smiles_to_molecule_reuse(tl_mol, canonical, error_buf, sizeof(error_buf));
+                    mol = (status == CCHEM_OK) ? tl_mol : NULL;
+                    free(canonical);
+                }
+            }
+        }
+
+        if (mol) {
+            result->success = true;
+
+            if (compute_all) {
+                /* Batch computation */
+                descriptor_value_t all_values[MAX_DESCRIPTORS];
+                int num_computed = descriptors_compute_all(mol, NULL, all_values, MAX_DESCRIPTORS);
+
+                int n = (ctx->num_descs < num_computed) ? ctx->num_descs : num_computed;
+                if (n > cached_num_defs) n = cached_num_defs;
+
+                for (int i = 0; i < n; i++) {
+                    char val_buf[DESC_VALUE_WIDTH];
+                    if (cached_defs[i] == NULL) {
+                        strcpy(val_buf, "0");
+                    } else if (cached_defs[i]->value_type == DESC_VALUE_INT) {
+                        fast_i64toa(all_values[i].i, val_buf, DESC_VALUE_WIDTH);
+                    } else {
+                        fast_dtoa(all_values[i].d, val_buf, DESC_VALUE_WIDTH);
+                    }
+                    result->output_fields[item->num_original_fields + i] = strdup(val_buf);
+                }
+                /* Fill remaining with "0" */
+                for (int i = n; i < ctx->num_descs; i++) {
+                    result->output_fields[item->num_original_fields + i] = strdup("0");
+                }
+            } else {
+                /* Individual computation for subset */
+                for (int i = 0; i < ctx->num_descs; i++) {
+                    char val_buf[DESC_VALUE_WIDTH];
+                    strcpy(val_buf, "0");
+
+                    const descriptor_def_t* def = descriptor_get(ctx->desc_names[i]);
+                    if (def) {
+                        descriptor_value_t value;
+                        memset(&value, 0, sizeof(value));
+                        if (def->compute(mol, &value) == CCHEM_OK) {
+                            if (def->value_type == DESC_VALUE_INT) {
+                                fast_i64toa(value.i, val_buf, DESC_VALUE_WIDTH);
+                            } else {
+                                fast_dtoa(value.d, val_buf, DESC_VALUE_WIDTH);
+                            }
+                        }
+                    }
+                    result->output_fields[item->num_original_fields + i] = strdup(val_buf);
+                }
+            }
+        } else {
+            /* Failed to parse - fill with "0" */
+            for (int i = 0; i < ctx->num_descs; i++) {
+                result->output_fields[item->num_original_fields + i] = strdup("0");
+            }
+        }
+
+        atomic_fetch_add(&ctx->rows_processed, 1);
+
+        /* Push to output queue */
+        if (!queue_push(ctx->output_queue, result)) {
+            result_item_free(result);
+        }
+
+        work_item_free(item);
+    }
+
+    molecule_free(tl_mol);
+    return NULL;
+}
+
+/* Parquet writer thread for compute */
+static void* pq_compute_writer_thread(void* arg) {
+    pq_compute_ctx_t* ctx = (pq_compute_ctx_t*)arg;
+
+    result_item_t* result;
+
+    while ((result = (result_item_t*)queue_pop(ctx->output_queue)) != NULL) {
+        parquet_writer_write_row(ctx->writer,
+                                  (const char**)result->output_fields,
+                                  result->num_fields);
+        atomic_fetch_add(&ctx->rows_written, 1);
+        result_item_free(result);
+    }
+
+    return NULL;
+}
+
+/* Parquet pipeline compute - streaming with constant memory */
+static int cmd_compute_parquet_pipeline(const char* input_file, const char* output_file,
+                                         const char* input_col, char** desc_names,
+                                         int num_descs, int ncpu, bool skip_canon, bool verbose) {
+    pq_compute_ctx_t ctx = {0};
+    ctx.skip_canon = skip_canon;
+    ctx.desc_names = desc_names;
+    ctx.num_descs = num_descs;
+
+    /* Count total rows for progress */
+    ctx.total_rows = parquet_count_rows(input_file);
+    if (ctx.total_rows == 0) {
+        fprintf(stderr, "Error: Input file is empty or invalid\n");
+        return 1;
+    }
+
+    /* Create parquet reader */
+    ctx.reader = parquet_stream_reader_create(input_file);
+    if (!ctx.reader) {
+        fprintf(stderr, "Error: Failed to open parquet file: %s\n", input_file);
+        return 1;
+    }
+
+    ctx.num_input_fields = parquet_stream_reader_num_columns(ctx.reader);
+
+    /* Find SMILES column */
+    ctx.smiles_col_idx = parquet_stream_reader_find_column(ctx.reader, input_col);
+    if (ctx.smiles_col_idx < 0) {
+        fprintf(stderr, "Error: Column '%s' not found in parquet file\n", input_col);
+        parquet_stream_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Build output column names and types (original columns + descriptor columns) */
+    int num_output_cols = ctx.num_input_fields + num_descs;
+    char** output_col_names = (char**)calloc(num_output_cols, sizeof(char*));
+    parquet_col_type_t* output_col_types = (parquet_col_type_t*)calloc(num_output_cols, sizeof(parquet_col_type_t));
+    if (!output_col_names || !output_col_types) {
+        free(output_col_names);
+        free(output_col_types);
+        parquet_stream_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Original input columns are strings */
+    for (int i = 0; i < ctx.num_input_fields; i++) {
+        output_col_names[i] = strdup(parquet_stream_reader_column_name(ctx.reader, i));
+        output_col_types[i] = PARQUET_COL_STRING;
+    }
+    /* Descriptor columns are doubles */
+    for (int i = 0; i < num_descs; i++) {
+        output_col_names[ctx.num_input_fields + i] = strdup(desc_names[i]);
+        output_col_types[ctx.num_input_fields + i] = PARQUET_COL_DOUBLE;
+    }
+
+    /* Check output format */
+    if (!is_parquet_file(output_file)) {
+        fprintf(stderr, "Error: Output must be a parquet file when input is parquet\n");
+        for (int i = 0; i < num_output_cols; i++) free(output_col_names[i]);
+        free(output_col_names);
+        free(output_col_types);
+        parquet_stream_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Create parquet writer with typed columns */
+    ctx.writer = parquet_writer_create(output_file,
+                                        (const char**)output_col_names,
+                                        output_col_types,
+                                        num_output_cols);
+    if (!ctx.writer) {
+        fprintf(stderr, "Error: Failed to create output parquet file\n");
+        for (int i = 0; i < num_output_cols; i++) free(output_col_names[i]);
+        free(output_col_names);
+        free(output_col_types);
+        parquet_stream_reader_free(ctx.reader);
+        return 1;
+    }
+    free(output_col_types);  /* Writer makes a copy */
+
+    /* Determine thread count */
+    ctx.num_workers = (ncpu > 0) ? ncpu : parallel_get_num_cores();
+
+    if (verbose) {
+        printf("Parquet pipeline mode: %zu molecules, %d workers\n", ctx.total_rows, ctx.num_workers);
+    }
+
+    /* Create bounded queues */
+    int queue_size = ctx.num_workers * 2;
+    ctx.input_queue = queue_create(queue_size);
+    ctx.output_queue = queue_create(queue_size);
+    if (!ctx.input_queue || !ctx.output_queue) {
+        fprintf(stderr, "Error: Failed to create queues\n");
+        if (ctx.input_queue) queue_free(ctx.input_queue);
+        if (ctx.output_queue) queue_free(ctx.output_queue);
+        parquet_writer_free(ctx.writer);
+        for (int i = 0; i < num_output_cols; i++) free(output_col_names[i]);
+        free(output_col_names);
+        parquet_stream_reader_free(ctx.reader);
+        return 1;
+    }
+
+    /* Initialize atomics */
+    atomic_store(&ctx.rows_read, 0);
+    atomic_store(&ctx.rows_processed, 0);
+    atomic_store(&ctx.rows_written, 0);
+
+    printf("Computing %d descriptors for %zu molecules...\n", num_descs, ctx.total_rows);
+
+    /* Create progress bar */
+    progress_config_t prog_config = PROGRESS_CONFIG_DEFAULT;
+    prog_config.prefix = "Processing";
+    progress_t* progress = progress_create(ctx.total_rows, &prog_config);
+
+    /* Start reader thread */
+    pthread_create(&ctx.reader_thread, NULL, pq_compute_reader_thread, &ctx);
+
+    /* Start worker threads */
+    ctx.worker_threads = (pthread_t*)malloc(ctx.num_workers * sizeof(pthread_t));
+    for (int i = 0; i < ctx.num_workers; i++) {
+        pthread_create(&ctx.worker_threads[i], NULL, pq_compute_worker_thread, &ctx);
+    }
+
+    /* Start writer thread */
+    pthread_create(&ctx.writer_thread, NULL, pq_compute_writer_thread, &ctx);
+
+    /* Progress monitoring (main thread) */
+    while (atomic_load(&ctx.rows_written) < ctx.total_rows) {
+        size_t written = atomic_load(&ctx.rows_written);
+        progress_update(progress, written);
+        usleep(50000);  /* 50ms */
+    }
+
+    /* Wait for reader to finish */
+    pthread_join(ctx.reader_thread, NULL);
+
+    /* Wait for all workers to finish */
+    for (int i = 0; i < ctx.num_workers; i++) {
+        pthread_join(ctx.worker_threads[i], NULL);
+    }
+
+    /* Signal output queue EOF and wait for writer */
+    queue_close(ctx.output_queue);
+    pthread_join(ctx.writer_thread, NULL);
+
+    progress_finish(progress);
+    progress_free(progress);
+
+    /* Cleanup */
+    queue_free(ctx.input_queue);
+    queue_free(ctx.output_queue);
+    free(ctx.worker_threads);
+    parquet_writer_free(ctx.writer);
+    for (int i = 0; i < num_output_cols; i++) free(output_col_names[i]);
+    free(output_col_names);
+    parquet_stream_reader_free(ctx.reader);
+
+    size_t rows_written = atomic_load(&ctx.rows_written);
+    fprintf(stderr, "\033[KProcessed: %zu/%zu (%.1f%% success)\n",
+           rows_written, ctx.total_rows,
+           ctx.total_rows > 0 ? (double)rows_written / ctx.total_rows * 100.0 : 0.0);
+    fprintf(stderr, "Output written to: %s\n", output_file);
+
+    return 0;
+}
+
+#endif /* HAVE_PARQUET */
+
+/* ============================================================================
+ * CSV Pipeline Compute
+ * ============================================================================ */
 
 /* Pipeline compute - streaming with constant memory */
 static int cmd_compute_pipeline(const char* input_file, const char* output_file,
@@ -655,7 +1467,7 @@ int cmd_compute(int argc, char* argv[]) {
         return 0;
     }
 
-    /* CSV batch mode - use pipeline streaming for constant memory usage */
+    /* Batch mode (CSV or Parquet) - use pipeline streaming for constant memory usage */
     if (input_file) {
         if (!input_col) {
             fprintf(stderr, "Error: Input column name required (-s/--col)\n");
@@ -680,7 +1492,32 @@ int cmd_compute(int argc, char* argv[]) {
             printf("\n");
         }
 
-        /* Use pipeline streaming for constant memory regardless of input size */
+#ifdef HAVE_PARQUET
+        bool input_is_parquet = is_parquet_file(input_file);
+        bool output_is_parquet = is_parquet_file(output_file);
+
+        if (input_is_parquet && output_is_parquet) {
+            /* Parquet -> Parquet */
+            int result = cmd_compute_parquet_pipeline(input_file, output_file, input_col,
+                                                       desc_names, num_descs, ncpu,
+                                                       skip_canonicalization, verbose);
+            descriptor_free_names(desc_names, num_descs);
+            return result;
+        } else if (!input_is_parquet && output_is_parquet) {
+            /* CSV -> Parquet */
+            int result = cmd_compute_csv_to_parquet_pipeline(input_file, output_file, input_col,
+                                                              desc_names, num_descs, ncpu,
+                                                              skip_canonicalization, verbose);
+            descriptor_free_names(desc_names, num_descs);
+            return result;
+        } else if (input_is_parquet && !output_is_parquet) {
+            fprintf(stderr, "Error: Cannot write CSV output from Parquet input. Use .parquet extension for output.\n");
+            descriptor_free_names(desc_names, num_descs);
+            return 1;
+        }
+#endif
+
+        /* Use CSV pipeline streaming for constant memory regardless of input size */
         int result = cmd_compute_pipeline(input_file, output_file, input_col,
                                           desc_names, num_descs, ncpu,
                                           skip_canonicalization, verbose);

@@ -193,10 +193,30 @@ find_package(JPEG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CAIRO REQUIRED cairo)
 
+# Fetch and build carquet library for Parquet support
+include(FetchContent)
+FetchContent_Declare(
+    carquet
+    GIT_REPOSITORY https://github.com/Vitruves/carquet.git
+    GIT_TAG        main
+    GIT_SHALLOW    TRUE
+)
+
+# Configure carquet build options (disable tests/examples/benchmarks)
+set(CARQUET_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CARQUET_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CARQUET_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+
+message(STATUS "Fetching carquet from GitHub...")
+FetchContent_MakeAvailable(carquet)
+set(HAVE_CARQUET TRUE)
+message(STATUS "carquet available for Parquet support")
+
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${JPEG_INCLUDE_DIR})
 include_directories(${CAIRO_INCLUDE_DIRS})
+include_directories(${carquet_SOURCE_DIR}/include)
 
 # Library sources
 set(CCHEM_SOURCES
@@ -215,6 +235,7 @@ set(CCHEM_SOURCES
     src/utils/threading.c
     src/utils/csv.c
     src/utils/progress.c
+    $<$<BOOL:${HAVE_CARQUET}>:src/utils/parquet.c>
     src/splitter/splitter.c
     src/descriptors/registry.c
     src/descriptors/counts.c
@@ -268,6 +289,10 @@ set(CCHEM_SOURCES
 add_library(cchem_lib STATIC ${CCHEM_SOURCES})
 target_link_libraries(cchem_lib PRIVATE Threads::Threads m ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
 target_link_directories(cchem_lib PRIVATE ${CAIRO_LIBRARY_DIRS})
+if(HAVE_CARQUET)
+    target_link_libraries(cchem_lib PRIVATE carquet)
+    target_compile_definitions(cchem_lib PRIVATE HAVE_PARQUET=1)
+endif()
 
 # Main executable
 add_executable(cchem
@@ -279,6 +304,10 @@ add_executable(cchem
     src/commands/cmd_split.c
 )
 target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads m ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
+if(HAVE_CARQUET)
+    target_compile_definitions(cchem PRIVATE HAVE_PARQUET=1)
+    target_link_libraries(cchem PRIVATE carquet)
+endif()
 
 # Tests
 enable_testing()

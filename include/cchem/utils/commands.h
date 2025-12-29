@@ -25,6 +25,10 @@
 #include "cchem/depictor/depictor.h"
 #include "cchem/splitter/splitter.h"
 
+#ifdef HAVE_PARQUET
+#include "cchem/utils/parquet.h"
+#endif
+
 #define VERSION "1.0.0"
 
 /* ============================================================================

@@ -464,7 +464,7 @@ DEFINE_CONST_FUNC(const_soxidized, 33)
     descriptor_def_t def = {0}; \
     strncpy(def.name, name_str, MAX_DESCRIPTOR_NAME - 1); \
     strncpy(def.description, desc_str, sizeof(def.description) - 1); \
-    def.category = DESC_CATEGORY_COUNTS; \
+    def.category = DESC_CATEGORY_CONSTITUTIONAL; \
     def.value_type = DESC_VALUE_DOUBLE; \
     def.compute = func; \
     descriptor_register(&def); \

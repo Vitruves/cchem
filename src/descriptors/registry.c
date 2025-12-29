@@ -392,6 +392,9 @@ int descriptors_compute_all(const molecule_t* mol,
                 case DESC_CATEGORY_CUSTOM:
                     batch_count = descriptors_compute_graph_all(mol, batch_values);
                     break;
+                case DESC_CATEGORY_CONSTITUTIONAL:
+                    batch_count = descriptors_compute_constitutional_all(mol, batch_values);
+                    break;
                 default:
                     batch_count = 0;
                     break;
@@ -524,15 +527,16 @@ void descriptor_free_names(char** names, int num_names) {
 
 const char* descriptor_category_name(descriptor_category_t category) {
     switch (category) {
-        case DESC_CATEGORY_COUNTS:      return "Counts";
-        case DESC_CATEGORY_RATIOS:      return "Ratios";
-        case DESC_CATEGORY_PROPERTIES:  return "Properties";
-        case DESC_CATEGORY_ELECTRONIC:  return "Electronic";
-        case DESC_CATEGORY_STERIC:      return "Steric";
-        case DESC_CATEGORY_ENERGETIC:   return "Energetic";
-        case DESC_CATEGORY_BITSTRING:   return "Bitstring";
-        case DESC_CATEGORY_FINGERPRINT: return "Fingerprint";
-        case DESC_CATEGORY_CUSTOM:      return "Custom";
-        default:                        return "Unknown";
+        case DESC_CATEGORY_COUNTS:        return "Counts";
+        case DESC_CATEGORY_RATIOS:        return "Ratios";
+        case DESC_CATEGORY_PROPERTIES:    return "Properties";
+        case DESC_CATEGORY_ELECTRONIC:    return "Electronic";
+        case DESC_CATEGORY_STERIC:        return "Steric";
+        case DESC_CATEGORY_ENERGETIC:     return "Energetic";
+        case DESC_CATEGORY_BITSTRING:     return "Bitstring";
+        case DESC_CATEGORY_FINGERPRINT:   return "Fingerprint";
+        case DESC_CATEGORY_CUSTOM:        return "Custom";
+        case DESC_CATEGORY_CONSTITUTIONAL: return "Constitutional";
+        default:                          return "Unknown";
     }
 }

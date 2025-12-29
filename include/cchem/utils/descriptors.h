@@ -38,6 +38,7 @@ typedef enum {
     DESC_CATEGORY_BITSTRING,
     DESC_CATEGORY_FINGERPRINT,
     DESC_CATEGORY_CUSTOM,
+    DESC_CATEGORY_CONSTITUTIONAL,
     DESC_CATEGORY_COUNT
 } descriptor_category_t;
 
@@ -684,5 +685,11 @@ void descriptors_register_framework(void);
  * - 34 descriptors
  */
 void descriptors_register_constitutional(void);
+
+/**
+ * Batch compute all constitutional extension descriptors (34 descriptors)
+ * Single pass through atoms and bonds.
+ */
+int descriptors_compute_constitutional_all(const molecule_t* mol, descriptor_value_t* values);
 
 #endif /* CCHEM_DESCRIPTORS_H */
