@@ -18,10 +18,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#include "cchem/descriptors.h"
+#include "cchem/utils/descriptors.h"
 #include "cchem/canonicalizer/molecule.h"
 #include "cchem/canonicalizer/smiles_writer.h"
-#include "cchem/simd.h"
+#include "cchem/utils/simd.h"
 
 /* ============================================================================
  * Helper Functions

@@ -15,7 +15,7 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <pthread.h>
-#include "canonicalizer/types.h"
+#include "cchem/canonicalizer/types.h"
 
 /* ============================================================================
  * Bounded Queue (Thread-Safe Ring Buffer)

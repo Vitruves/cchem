@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <ctype.h>
-#include "cchem/descriptors.h"
+#include "cchem/utils/descriptors.h"
 #include "cchem/canonicalizer/molecule.h"
 #include "cchem/cchem.h"
 

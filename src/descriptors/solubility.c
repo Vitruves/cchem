@@ -19,7 +19,7 @@
 
 #include <string.h>
 #include <math.h>
-#include "cchem/descriptors.h"
+#include "cchem/utils/descriptors.h"
 #include "cchem/canonicalizer/molecule.h"
 #include "cchem/canonicalizer/atom.h"
 #include "cchem/canonicalizer/bond.h"

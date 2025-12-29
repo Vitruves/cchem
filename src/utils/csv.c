@@ -12,7 +12,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
-#include "cchem/csv.h"
+#include "cchem/utils/csv.h"
 
 #define INITIAL_ROW_CAPACITY 16
 #define INITIAL_LINE_BUFFER_SIZE 4096

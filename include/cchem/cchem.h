@@ -22,10 +22,10 @@
 #include "canonicalizer/sanitize.h"
 
 /* Utilities */
-#include "csv.h"
-#include "progress.h"
-#include "threading.h"
-#include "memory.h"
+#include "utils/csv.h"
+#include "utils/progress.h"
+#include "utils/threading.h"
+#include "utils/memory.h"
 
 /* Version information */
 #define CCHEM_VERSION_MAJOR 1

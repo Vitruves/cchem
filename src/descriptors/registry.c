@@ -8,7 +8,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdint.h>
-#include "cchem/descriptors.h"
+#include "cchem/utils/descriptors.h"
 #include "cchem/cchem.h"
 
 /* Global registry instance */

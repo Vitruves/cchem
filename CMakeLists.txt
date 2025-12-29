@@ -211,11 +211,11 @@ set(CCHEM_SOURCES
     src/canonicalizer/ring_finder.c
     src/canonicalizer/stereo.c
     src/canonicalizer/sanitize.c
-    src/memory.c
-    src/threading.c
-    src/csv.c
-    src/progress.c
-    src/splitter.c
+    src/utils/memory.c
+    src/utils/threading.c
+    src/utils/csv.c
+    src/utils/progress.c
+    src/utils/splitter.c
     src/descriptors/registry.c
     src/descriptors/counts.c
     src/descriptors/logp.c
@@ -270,7 +270,14 @@ target_link_libraries(cchem_lib PRIVATE Threads::Threads m ${JPEG_LIBRARIES} ${C
 target_link_directories(cchem_lib PRIVATE ${CAIRO_LIBRARY_DIRS})
 
 # Main executable
-add_executable(cchem src/main.c)
+add_executable(cchem
+    src/main.c
+    src/commands/cmd_canonicalize.c
+    src/commands/cmd_validate.c
+    src/commands/cmd_compute.c
+    src/commands/cmd_depict.c
+    src/commands/cmd_split.c
+)
 target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads m ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
 
 # Tests

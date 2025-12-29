@@ -5,7 +5,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include "cchem/memory.h"
+#include "cchem/utils/memory.h"
 #include "cchem/canonicalizer/molecule.h"
 
 /* ============================================================================

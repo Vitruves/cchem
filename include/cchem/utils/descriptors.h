@@ -14,8 +14,8 @@
 
 #include <stddef.h>
 #include <stdbool.h>
-#include "canonicalizer/types.h"
-#include "canonicalizer/molecule.h"
+#include "cchem/canonicalizer/types.h"
+#include "cchem/canonicalizer/molecule.h"
 
 /* Maximum number of registered descriptors */
 #define MAX_DESCRIPTORS 2048

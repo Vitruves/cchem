@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include "cchem/cchem.h"
-#include "cchem/descriptors.h"
+#include "cchem/utils/descriptors.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;

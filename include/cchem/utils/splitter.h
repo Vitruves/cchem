@@ -10,8 +10,8 @@
 #ifndef CCHEM_SPLITTER_H
 #define CCHEM_SPLITTER_H
 
-#include "canonicalizer/types.h"
-#include "canonicalizer/molecule.h"
+#include "cchem/canonicalizer/types.h"
+#include "cchem/canonicalizer/molecule.h"
 #include <stdbool.h>
 #include <stddef.h>
 

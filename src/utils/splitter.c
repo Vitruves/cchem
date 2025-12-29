@@ -10,11 +10,11 @@
 #include <math.h>
 #include <unistd.h>
 
-#include "cchem/splitter.h"
+#include "cchem/utils/splitter.h"
 #include "cchem/cchem.h"
-#include "cchem/csv.h"
-#include "cchem/threading.h"
-#include "cchem/progress.h"
+#include "cchem/utils/csv.h"
+#include "cchem/utils/threading.h"
+#include "cchem/utils/progress.h"
 
 /* ========================================================================
  * Ratio parsing

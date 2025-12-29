@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
-#include "cchem/progress.h"
+#include "cchem/utils/progress.h"
 
 #define RATE_SAMPLES 10
 #define MIN_UPDATE_INTERVAL_MS 50

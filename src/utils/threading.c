@@ -8,9 +8,9 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
-#include "cchem/threading.h"
-#include "cchem/csv.h"
-#include "cchem/progress.h"
+#include "cchem/utils/threading.h"
+#include "cchem/utils/csv.h"
+#include "cchem/utils/progress.h"
 #include "cchem/canonicalizer/canon.h"
 #include "cchem/canonicalizer/parser.h"
 
