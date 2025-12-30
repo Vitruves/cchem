@@ -384,10 +384,11 @@ parquet_writer_t* parquet_writer_create(const char* filename,
         }
     }
 
-    /* Create writer with Snappy compression (default, most compatible) */
+    /* Create writer with ZSTD compression (better compression ratio) */
     carquet_writer_options_t opts;
     carquet_writer_options_init(&opts);
-    opts.compression = CARQUET_COMPRESSION_SNAPPY;
+    opts.compression = CARQUET_COMPRESSION_ZSTD;
+    opts.compression_level = 3;  /* ZSTD level 1-22, default 3 for good balance */
 
     writer->writer = carquet_writer_create(filename, writer->schema, &opts, &err);
     if (!writer->writer) {
