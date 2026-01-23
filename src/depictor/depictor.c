@@ -248,6 +248,108 @@ static void kekulize_molecule(molecule_t* mol) {
     free(state.arom_bond_idx);
 }
 
+/* Generate wedge bonds for tetrahedral chiral centers based on 2D coordinates */
+static void assign_stereo_bonds(molecule_t* mol, const mol_coords_t* coords) {
+    if (!mol || !coords || !coords->has_2d) return;
+
+    for (int i = 0; i < mol->num_atoms; i++) {
+        atom_t* atom = &mol->atoms[i];
+        if (atom->chirality == CHIRALITY_NONE) continue;
+
+        /* Need at least 3 neighbors for tetrahedral chirality
+         * (4th could be implicit H) */
+        if (atom->num_neighbors < 3) continue;
+
+        point2d_t center_pos = coords->coords_2d[i];
+
+        /* Calculate average position of all neighbors (for determining "outward") */
+        point2d_t avg_neighbor = {0, 0};
+        for (int j = 0; j < atom->num_neighbors; j++) {
+            int nb = atom->neighbors[j];
+            avg_neighbor.x += coords->coords_2d[nb].x;
+            avg_neighbor.y += coords->coords_2d[nb].y;
+        }
+        avg_neighbor.x /= atom->num_neighbors;
+        avg_neighbor.y /= atom->num_neighbors;
+
+        /* Score all bonds and find best two for wedge/dash */
+        typedef struct {
+            int bond_idx;
+            int neighbor;
+            double score;
+        } bond_score_t;
+
+        bond_score_t candidates[MAX_NEIGHBORS];
+        int num_candidates = 0;
+
+        for (int j = 0; j < atom->num_neighbors; j++) {
+            int nb = atom->neighbors[j];
+            int bond_idx = atom->neighbor_bonds[j];
+            if (bond_idx < 0) continue;
+
+            bond_t* bond = &mol->bonds[bond_idx];
+
+            /* Skip if bond already has stereo marking */
+            if (bond->stereo_type != BOND_NONE) continue;
+
+            /* Skip double/triple bonds */
+            if (bond->type == BOND_DOUBLE || bond->type == BOND_TRIPLE) continue;
+
+            double score = 0.0;
+
+            /* Prefer non-ring bonds (more visible) */
+            if (!bond->in_ring) score += 100.0;
+
+            /* Prefer bonds pointing away from molecule center */
+            point2d_t nb_pos = coords->coords_2d[nb];
+            point2d_t to_nb = {nb_pos.x - center_pos.x, nb_pos.y - center_pos.y};
+            point2d_t to_avg = {avg_neighbor.x - center_pos.x, avg_neighbor.y - center_pos.y};
+
+            /* Dot product: positive if pointing same direction as average */
+            double dot = to_nb.x * to_avg.x + to_nb.y * to_avg.y;
+            score -= dot;  /* Prefer opposite direction (outward) */
+
+            /* Prefer bonds to carbon (methyl groups are common stereo indicators) */
+            if (mol->atoms[nb].element == ELEM_C) score += 10.0;
+
+            candidates[num_candidates].bond_idx = bond_idx;
+            candidates[num_candidates].neighbor = nb;
+            candidates[num_candidates].score = score;
+            num_candidates++;
+        }
+
+        /* Sort candidates by score (descending) - simple bubble sort for small array */
+        for (int a = 0; a < num_candidates - 1; a++) {
+            for (int b = a + 1; b < num_candidates; b++) {
+                if (candidates[b].score > candidates[a].score) {
+                    bond_score_t tmp = candidates[a];
+                    candidates[a] = candidates[b];
+                    candidates[b] = tmp;
+                }
+            }
+        }
+
+        /* Assign wedge (up) to best bond, dash (down) to second best
+         * This shows both "front" and "back" substituents */
+        if (num_candidates >= 1) {
+            bond_t* bond1 = &mol->bonds[candidates[0].bond_idx];
+            /* CW (@) = first substituent goes up (solid wedge)
+             * CCW (@@) = first substituent goes down (dashed wedge) */
+            bool first_is_up = (atom->chirality == CHIRALITY_CW);
+            bond1->stereo_type = first_is_up ? BOND_UP : BOND_DOWN;
+            bond1->stereo_atom = candidates[0].neighbor;
+        }
+
+        if (num_candidates >= 2) {
+            bond_t* bond2 = &mol->bonds[candidates[1].bond_idx];
+            /* Second bond gets opposite stereo */
+            bool first_is_up = (atom->chirality == CHIRALITY_CW);
+            bond2->stereo_type = first_is_up ? BOND_DOWN : BOND_UP;
+            bond2->stereo_atom = candidates[1].neighbor;
+        }
+    }
+}
+
 cchem_status_t depict_molecule(const molecule_t* mol, const char* filename,
                                const depictor_options_t* options) {
     if (!mol || !filename) return CCHEM_ERROR_INVALID_INPUT;
@@ -295,6 +397,9 @@ cchem_status_t depict_molecule(const molecule_t* mol, const char* filename,
         molecule_free(work_mol);
         return CCHEM_ERROR_MEMORY;
     }
+
+    /* Assign wedge bonds for chiral centers */
+    assign_stereo_bonds(work_mol, coords);
 
     /* Apply scale factor for higher resolution output */
     double scale = (opts.scale_factor > 0.0) ? opts.scale_factor : 1.0;
@@ -444,6 +549,9 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
         molecule_free(mol);
         return CCHEM_ERROR_MEMORY;
     }
+
+    /* Assign wedge bonds for chiral centers */
+    assign_stereo_bonds(work_mol, coords);
 
     /* Calculate effective margin based on render style */
     int effective_margin = opts.margin;

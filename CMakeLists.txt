@@ -277,6 +277,13 @@ set(CCHEM_SOURCES
     src/depictor/types.c
     src/depictor/colors.c
     src/depictor/coords2d.c
+    src/depictor/layout_utils.c
+    src/depictor/ring_systems.c
+    src/depictor/ring_templates.c
+    src/depictor/ring_placement.c
+    src/depictor/chain_placement.c
+    src/depictor/collision.c
+    src/depictor/force_directed.c
     src/depictor/coords3d.c
     src/depictor/render.c
     src/depictor/depictor.c
