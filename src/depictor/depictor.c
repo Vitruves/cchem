@@ -24,7 +24,12 @@ typedef struct {
 
 /* Check if aromatic atom contributes lone pair instead of needing double bond */
 static bool atom_has_lone_pair_contribution(const atom_t* atom, const molecule_t* mol) {
-    if (!atom->aromatic) return false;
+    if (!atom->aromatic) {
+        if (atom->element == ELEM_N) {
+            fprintf(stderr, "DEBUG kekule: N atom %d NOT aromatic, skipping lone pair check\n", atom->index);
+        }
+        return false;
+    }
 
     /* Pyrrole-type nitrogen: aromatic N that contributes lone pair */
     if (atom->element == ELEM_N) {
@@ -33,14 +38,12 @@ static bool atom_has_lone_pair_contribution(const atom_t* atom, const molecule_t
 
         /* Check what rings this N is in */
         bool in_5_ring = false;
-        bool in_6_ring = false;
 
         for (int r = 0; r < mol->num_rings; r++) {
             const ring_t* ring = &mol->rings[r];
             for (int i = 0; i < ring->size; i++) {
                 if (ring->atoms[i] == atom->index) {
                     if (ring->size == 5) in_5_ring = true;
-                    if (ring->size == 6) in_6_ring = true;
                     break;
                 }
             }
@@ -54,19 +57,51 @@ static bool atom_has_lone_pair_contribution(const atom_t* atom, const molecule_t
             return true;
         }
 
-        /* Aromatic N with exactly 2 neighbors:
-         * - Pyrrole-type: contributes lone pair, needs implicit H -> no double bond
-         * - Pyridine-type: participates in C=N double bond, no H
-         *
-         * Distinguish by ring size: 5-ring = pyrrole, 6-ring = pyridine
-         * BUT in complex fused systems, SSSR might not find the 5-ring.
-         */
-        if (atom->num_neighbors == 2 && atom->ring_count > 0) {
-            /* Pyrrole-type if in 5-ring, or if NOT in any 6-ring
-             * (handles cases where 5-ring isn't in SSSR but we know
-             * it's not pyridine because not in a 6-ring) */
-            if (in_5_ring || !in_6_ring) {
-                return true;
+        /* For N with 2 neighbors in a 5-membered ring:
+         * In rings like imidazole/benzimidazole with 2 N's (both with 2 neighbors),
+         * exactly one contributes the lone pair. Use heuristic: if there's another
+         * N with 3 neighbors (substituted), this one doesn't contribute. Otherwise,
+         * if there are multiple N's with 2 neighbors, the highest-indexed one
+         * contributes (arbitrary but consistent choice). */
+        if (atom->num_neighbors == 2 && in_5_ring) {
+            for (int r = 0; r < mol->num_rings; r++) {
+                const ring_t* ring = &mol->rings[r];
+                if (ring->size != 5) continue;
+
+                /* Check if this atom is in this ring */
+                bool atom_in_ring = false;
+                for (int i = 0; i < ring->size; i++) {
+                    if (ring->atoms[i] == atom->index) {
+                        atom_in_ring = true;
+                        break;
+                    }
+                }
+                if (!atom_in_ring) continue;
+
+                /* Check other N's in this ring */
+                bool has_3_neighbor_n = false;
+                int max_2_neighbor_n = -1;
+                for (int i = 0; i < ring->size; i++) {
+                    const atom_t* ra = &mol->atoms[ring->atoms[i]];
+                    if (ra->element != ELEM_N) continue;
+                    if (ra->num_neighbors == 3) {
+                        has_3_neighbor_n = true;
+                    } else if (ra->num_neighbors == 2) {
+                        if (ring->atoms[i] > max_2_neighbor_n) {
+                            max_2_neighbor_n = ring->atoms[i];
+                        }
+                    }
+                }
+
+                /* If another N has 3 neighbors, it's the lone pair contributor */
+                if (has_3_neighbor_n) {
+                    return false;  /* This N participates in double bonds */
+                }
+
+                /* Among 2-neighbor N's, the highest-indexed one contributes lone pair */
+                if (atom->index == max_2_neighbor_n) {
+                    return true;  /* This N contributes lone pair */
+                }
             }
         }
     }
@@ -166,6 +201,20 @@ static bool kekule_solve(kekule_state_t* state, int bond_idx) {
         if (state->mol->bonds[bi].atom1 == a2 || state->mol->bonds[bi].atom2 == a2) a2_has_double = true;
     }
 
+    /* Check if either atom contributes lone pair (cannot accept double bond) */
+    bool a1_lone_pair = atom_has_lone_pair_contribution(&state->mol->atoms[a1], state->mol);
+    bool a2_lone_pair = atom_has_lone_pair_contribution(&state->mol->atoms[a2], state->mol);
+
+    /* Treat lone pair as having a double (satisfied, can't take another) */
+    if (a1_lone_pair) a1_has_double = true;
+    if (a2_lone_pair) a2_has_double = true;
+
+    static int debug_depth = 0;
+    if (debug_depth < 3) {
+        fprintf(stderr, "DEBUG kekule[%d]: bond %d-%d, a1_has_dbl=%d, a2_has_dbl=%d, a1_lp=%d, a2_lp=%d\n",
+                bond_idx, a1, a2, a1_has_double, a2_has_double, a1_lone_pair, a2_lone_pair);
+    }
+
     /* If both atoms already have doubles, this must be single */
     if (a1_has_double && a2_has_double) {
         state->bond_is_double[bond_idx] = false;
@@ -234,11 +283,16 @@ static void kekulize_molecule(molecule_t* mol) {
     /* Solve using backtracking - constraint propagation is built into the solver */
     bool success = kekule_solve(&state, 0);
 
+    fprintf(stderr, "DEBUG kekule: solve returned %s\n", success ? "SUCCESS" : "FAILED");
     if (success) {
         /* Apply the solution */
         for (int i = 0; i < state.num_arom_bonds; i++) {
             int b = state.arom_bond_idx[i];
             mol->bonds[b].type = state.bond_is_double[i] ? BOND_DOUBLE : BOND_SINGLE;
+            if (state.bond_is_double[i]) {
+                fprintf(stderr, "DEBUG kekule: bond %d (%d-%d) assigned DOUBLE\n",
+                        b, mol->bonds[b].atom1, mol->bonds[b].atom2);
+            }
         }
     } else {
         /* Failed to find valid Kekule structure - convert all aromatic to single */
