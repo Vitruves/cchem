@@ -306,7 +306,38 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
     if (cnt > 0) {
         double len = point2d_length(sum);
         if (len > 0.01) {
+            /* Calculate base angle pointing away from other connections */
             double base_angle = atan2(-sum.y, -sum.x);
+
+            /* Only apply zigzag offset when the neighbor is a pure sp3 chain atom.
+             * Don't apply zigzag for:
+             * - Ring atoms (preserves ring-to-ring straight connections)
+             * - sp2 atoms with double bonds (preserves planar amide/carbonyl geometry) */
+            bool is_sp3_chain = (mol->atoms[placed_neighbor].ring_count == 0);
+
+            if (is_sp3_chain) {
+                /* Check if neighbor has any double/triple bonds (sp2/sp hybridization) */
+                const atom_t* nb_atom_check = &mol->atoms[placed_neighbor];
+                for (int k = 0; k < nb_atom_check->num_neighbors; k++) {
+                    int bond_idx = nb_atom_check->neighbor_bonds[k];
+                    if (bond_idx >= 0 &&
+                        (mol->bonds[bond_idx].type == BOND_DOUBLE ||
+                         mol->bonds[bond_idx].type == BOND_TRIPLE)) {
+                        is_sp3_chain = false;
+                        break;
+                    }
+                }
+            }
+
+            if (is_sp3_chain) {
+                /* Neighbor is a pure sp3 chain atom - apply zigzag offset (60 degrees) */
+                int neighbor_chain_dir = ctx->chain_dir[placed_neighbor];
+                int zigzag_dir = -neighbor_chain_dir;
+                if (zigzag_dir == 0) zigzag_dir = 1;
+
+                base_angle = base_angle + zigzag_dir * M_PI / 3.0;
+            }
+
             away_dir.x = cos(base_angle);
             away_dir.y = sin(base_angle);
         }
