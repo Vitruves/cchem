@@ -473,7 +473,7 @@ cchem_status_t depict_molecule(const molecule_t* mol, const char* filename,
     /* Create scaled options for rendering */
     depictor_options_t scaled_opts = opts;
     scaled_opts.bond_width *= scale;
-    scaled_opts.font_size *= scale;
+    scaled_opts.font_scale *= scale;
     scaled_opts.bond_length *= scale;
 
     /* Render - use appropriate context for format */
@@ -639,7 +639,7 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
     /* Create scaled options for rendering */
     depictor_options_t scaled_opts = opts;
     scaled_opts.bond_width *= scale;
-    scaled_opts.font_size *= scale;
+    scaled_opts.font_scale *= scale;
     scaled_opts.bond_length *= scale;
 
     /* Render - use appropriate context for format */

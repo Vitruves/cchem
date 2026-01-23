@@ -18,6 +18,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* Base font size constant (internal) */
+#define BASE_FONT_SIZE 3.5
+
 struct render_context {
     cairo_surface_t* surface;
     cairo_t* cr;
@@ -112,7 +115,7 @@ static void draw_line_ex(cairo_t* cr, point2d_t p1, point2d_t p2, double width, 
 /* Calculate bond gap endpoints for modern style (bond shortening at heteroatoms) */
 void calculate_bond_gap(point2d_t p1, point2d_t p2,
                         bool gap_at_p1, bool gap_at_p2,
-                        double gap_factor, double font_size,
+                        double gap_factor, double base_scale, double font_scale,
                         point2d_t* out_p1, point2d_t* out_p2) {
     double len = point2d_distance(p1, p2);
     if (len < 0.001) {
@@ -125,9 +128,9 @@ void calculate_bond_gap(point2d_t p1, point2d_t p2,
     dir = point2d_scale(dir, 1.0 / len);
 
     /* Gap size must be large enough to clear the atom label
-     * font_size * 9.0 is the actual rendered font size in render_atom_label_modern
-     * We need gap to be roughly half the text height plus some margin */
-    double actual_font = font_size * 9.0;
+     * Use the same scaling as render_atom_label_modern_ex */
+    double fs = (font_scale > 0.0) ? font_scale : 1.0;
+    double actual_font = BASE_FONT_SIZE * base_scale * 0.24 * fs;
     double gap_size = actual_font * 0.6 * gap_factor;
 
     double t1 = gap_at_p1 ? (gap_size / len) : 0.0;
@@ -363,7 +366,7 @@ static void render_atom_label_modern_ex(cairo_t* cr, const atom_t* atom, point2d
                                          const depictor_options_t* opts,
                                          rgb_color_t bg __attribute__((unused)),
                                          const molecule_t* mol, int atom_idx,
-                                         const mol_coords_t* coords) {
+                                         const mol_coords_t* coords, double base_scale) {
     const char* symbol = element_to_symbol(atom->element);
     char label[64];
     char charge_str[8];
@@ -404,7 +407,10 @@ static void render_atom_label_modern_ex(cairo_t* cr, const atom_t* atom, point2d
         snprintf(label, sizeof(label), "%s%s", symbol, charge_str);
     }
 
-    double font_size = opts->font_size * 9.0;
+    /* Scale font size based on average bond length (base_scale)
+     * This ensures consistent letter-to-bond proportions across molecule sizes */
+    double fs = (opts->font_scale > 0.0) ? opts->font_scale : 1.0;
+    double font_size = BASE_FONT_SIZE * base_scale * 0.24 * fs;
 
     cairo_text_extents_t extents;
     cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
@@ -413,9 +419,14 @@ static void render_atom_label_modern_ex(cairo_t* cr, const atom_t* atom, point2d
 
     /* No background - the bond gaps provide the clearance */
 
-    /* Draw colored text */
-    rgb_color_t color = atom_get_color(atom->element);
-    set_color(cr, color);
+    /* Draw text - black by default, colored if colored_atoms is enabled */
+    if (opts->colored_atoms) {
+        rgb_color_t color = atom_get_color(atom->element);
+        set_color(cr, color);
+    } else {
+        rgb_color_t black = {0, 0, 0};
+        set_color(cr, black);
+    }
 
     /* Center the text properly */
     cairo_move_to(cr,
@@ -427,9 +438,9 @@ static void render_atom_label_modern_ex(cairo_t* cr, const atom_t* atom, point2d
 /* Render atom label in modern style (no circle background, just colored text) */
 static void render_atom_label_modern(cairo_t* cr, const atom_t* atom, point2d_t pos,
                                       const depictor_options_t* opts,
-                                      rgb_color_t bg) {
+                                      rgb_color_t bg, double base_scale) {
     /* Fallback without bond direction info - H goes on right */
-    render_atom_label_modern_ex(cr, atom, pos, opts, bg, NULL, -1, NULL);
+    render_atom_label_modern_ex(cr, atom, pos, opts, bg, NULL, -1, NULL, base_scale);
 }
 
 static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
@@ -446,7 +457,7 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
 
         /* Show label on top for non-carbon or if requested */
         if (should_show_label(atom, opts) && opts->render_style != RENDER_STYLE_SPACEFILL) {
-            double font_size = opts->font_size * 8.0;
+            double font_size = BASE_FONT_SIZE * opts->font_scale * 8.0;
             const char* symbol = element_to_symbol(atom->element);
             char label[64];
             char charge_str[8];
@@ -479,7 +490,7 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
 
     /* Modern style: no circle, just text with background */
     if (opts->style_preset == DEPICT_STYLE_MODERN) {
-        render_atom_label_modern(cr, atom, pos, opts, bg);
+        render_atom_label_modern(cr, atom, pos, opts, bg, base_scale);
         return;
     }
 
@@ -504,7 +515,7 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
         snprintf(label, sizeof(label), "%s%s", symbol, charge_str);
     }
 
-    double font_size = opts->font_size * 10.0;
+    double font_size = BASE_FONT_SIZE * opts->font_scale * 10.0;
 
     /* Background circle */
     cairo_text_extents_t extents;
@@ -524,8 +535,14 @@ static void render_atom_label(cairo_t* cr, const atom_t* atom, point2d_t pos,
     set_color(cr, outline);
     cairo_stroke(cr);
 
-    rgb_color_t color = atom_get_color(atom->element);
-    set_color(cr, color);
+    /* Draw text - black by default, colored if colored_atoms is enabled */
+    if (opts->colored_atoms) {
+        rgb_color_t color = atom_get_color(atom->element);
+        set_color(cr, color);
+    } else {
+        rgb_color_t black = {0, 0, 0};
+        set_color(cr, black);
+    }
     draw_text(cr, label, pos, font_size);
 }
 
@@ -546,7 +563,7 @@ static void render_atom_label_ex(cairo_t* cr, const molecule_t* mol, int atom_id
         render_atom_sphere(cr, atom, pos, radius, opts);
         if (should_show_label_ex(atom, opts, mol, atom_idx) &&
             opts->render_style != RENDER_STYLE_SPACEFILL) {
-            double font_size = opts->font_size * 8.0;
+            double font_size = BASE_FONT_SIZE * opts->font_scale * 8.0;
             const char* symbol = element_to_symbol(atom->element);
             char label[64];
             char charge_str[8];
@@ -577,7 +594,7 @@ static void render_atom_label_ex(cairo_t* cr, const molecule_t* mol, int atom_id
     if (!should_show_label_ex(atom, opts, mol, atom_idx)) return;
 
     if (opts->style_preset == DEPICT_STYLE_MODERN) {
-        render_atom_label_modern_ex(cr, atom, pos, opts, bg, mol, atom_idx, coords);
+        render_atom_label_modern_ex(cr, atom, pos, opts, bg, mol, atom_idx, coords, base_scale);
         return;
     }
 
@@ -1019,7 +1036,7 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
             bool gap1 = apply_gaps && needs_bond_gap(mol, i, opts);
             bool gap2 = apply_gaps && needs_bond_gap(mol, j, opts);
             point2d_t gp1, gp2;
-            calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, opts->font_size, &gp1, &gp2);
+            calculate_bond_gap(p1, p2, gap1, gap2, opts->heteroatom_gap, base_scale, opts->font_scale, &gp1, &gp2);
 
             int order = bond_get_int_order(bond);
             bool use_colored_sticks = (opts->render_style == RENDER_STYLE_STICKS ||

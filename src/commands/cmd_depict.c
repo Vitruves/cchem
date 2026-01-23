@@ -32,7 +32,8 @@ void print_depict_usage(const char* prog_name) {
     printf("  --show-carbons          Show 'C' labels on carbons\n");
     printf("  --show-hydrogens        Show hydrogen labels\n");
     printf("  --terminal-carbons      Show CH3 on terminal carbons\n");
-    printf("  --font-size <scale>     Font size scale (default: 3.5)\n");
+    printf("  --font-scale <N>        Font scaling factor (default: 1.0)\n");
+    printf("  --colored-atoms         Use element colors for atom labels\n");
     printf("\n");
     printf("3D/Surface Options:\n");
     printf("  --atom-filling          Draw atoms as filled CPK spheres\n");
@@ -70,7 +71,7 @@ int cmd_depict(int argc, char* argv[]) {
         {"show-hydrogens", no_argument,       0, 1004},
         {"toggle-aromaticity", no_argument,   0, 1005},
         {"atom-filling",   no_argument,       0, 1006},
-        {"font-size",      required_argument, 0, 1007},
+        {"colored-atoms",  no_argument,       0, 1007},
         {"quality",        required_argument, 0, 1008},
         {"max-iter",       required_argument, 0, 1009},
         {"proportional-atoms", no_argument,   0, 1010},
@@ -83,6 +84,7 @@ int cmd_depict(int argc, char* argv[]) {
         {"terminal-carbons", no_argument,     0, 1017},
         {"verbose",        no_argument,       0, 'v'},
         {"debug",          no_argument,       0, 1018},
+        {"font-scale",     required_argument, 0, 1019},
         {"help",           no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -165,10 +167,8 @@ int cmd_depict(int argc, char* argv[]) {
             case 1006:  /* --atom-filling */
                 options.atom_filling = true;
                 break;
-            case 1007:  /* --font-size */
-                options.font_size = atof(optarg);
-                if (options.font_size < 0.5) options.font_size = 0.5;
-                if (options.font_size > 10.0) options.font_size = 10.0;
+            case 1007:  /* --colored-atoms */
+                options.colored_atoms = true;
                 break;
             case 1008:  /* --quality */
                 options.jpeg_quality = atoi(optarg);
@@ -226,6 +226,11 @@ int cmd_depict(int argc, char* argv[]) {
                 break;
             case 1018:  /* --debug */
                 options.debug = true;
+                break;
+            case 1019:  /* --font-scale */
+                options.font_scale = atof(optarg);
+                if (options.font_scale < 0.1) options.font_scale = 0.1;
+                if (options.font_scale > 3.0) options.font_scale = 3.0;
                 break;
             case 'v':
                 verbose = true;

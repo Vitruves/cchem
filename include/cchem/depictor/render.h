@@ -29,7 +29,7 @@ cchem_status_t render_save_svg(render_context_t* ctx, const char* filename);
 /* Helper: calculate gap endpoints for bonds terminating at heteroatoms */
 void calculate_bond_gap(point2d_t p1, point2d_t p2,
                         bool gap_at_p1, bool gap_at_p2,
-                        double gap_factor, double font_size,
+                        double gap_factor, double base_scale, double font_scale,
                         point2d_t* out_p1, point2d_t* out_p2);
 
 #endif /* CCHEM_DEPICTOR_RENDER_H */

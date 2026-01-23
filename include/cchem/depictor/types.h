@@ -95,7 +95,6 @@ typedef struct {
     bool draw_aromatic_circles;
     bool atom_filling;
     bool proportional_atoms;    /* Scale atoms by VDW radius (for 3D styles) */
-    double font_size;
     int max_iterations;
     image_format_t format;
     int jpeg_quality;
@@ -105,6 +104,8 @@ typedef struct {
     double scale_factor;        /* Resolution scale factor (1.0 = normal, 2.0 = 2x resolution) */
     double double_bond_offset;  /* Offset for double bonds from center line */
     double triple_bond_offset;  /* Offset for triple bonds from center line */
+    double font_scale;          /* Font scaling factor (1.0 = default) */
+    bool colored_atoms;         /* Use element colors for atom labels (false = black) */
     bool terminal_carbon_labels; /* Show labels on terminal carbons (CH3) */
     bool debug;                  /* Print debug information */
 } depictor_options_t;
@@ -127,7 +128,6 @@ typedef struct {
     .draw_aromatic_circles = false, \
     .atom_filling = false, \
     .proportional_atoms = true, \
-    .font_size = 3.5, \
     .max_iterations = 500, \
     .format = IMG_FORMAT_PNG, \
     .jpeg_quality = 95, \
@@ -136,6 +136,8 @@ typedef struct {
     .scale_factor = 1.0, \
     .double_bond_offset = 0.12, \
     .triple_bond_offset = 0.18, \
+    .font_scale = 1.0, \
+    .colored_atoms = false, \
     .terminal_carbon_labels = false, \
     .debug = false \
 }
