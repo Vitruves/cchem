@@ -9,6 +9,7 @@
 
 #include "cchem/depictor/coords2d.h"
 #include "cchem/depictor/layout2d.h"
+#include "cchem/depictor/force_directed.h"
 #include "cchem/depictor/types.h"
 #include <stdlib.h>
 #include <math.h>
@@ -140,6 +141,11 @@ mol_coords_t* coords2d_generate(const molecule_t* mol, const coords2d_options_t*
             ctx->placed[i] = true;
         }
     }
+
+    /* Note: Force-directed refinement for bridged systems is disabled as it
+     * tends to collapse the structure. Bridged ring systems like morphine
+     * need template-based placement for good results. */
+    (void)ctx; /* Suppress unused warning */
 
     /* Center the coordinates */
     coords2d_center(result);

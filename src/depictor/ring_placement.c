@@ -406,30 +406,65 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
     return true;
 }
 
-/* ============== Find Most Connected Ring ============== */
+/* ============== Find Best Starting Ring ============== */
 
 static int find_most_connected_ring(const molecule_t* mol) {
     int nr = mol->num_rings;
     int first_ring = -1;
-    int max_connections = -1;
+    int best_score = -1;
 
+    /*
+     * For complex polycyclic systems (especially bridged), we need to start with
+     * a ring that has well-defined geometry. Priority:
+     * 1. 6-membered aromatic rings (benzene) - most stable geometry
+     * 2. 6-membered rings - good geometry
+     * 3. 5-membered aromatic rings
+     * 4. Other rings by connectivity
+     *
+     * Score: aromatic_bonus + size_bonus + connection_count
+     */
     for (int i = 0; i < nr; i++) {
-        /* Count atoms in ring that have neighbors outside the ring */
+        const ring_t* ring = &mol->rings[i];
+        int score = 0;
+
+        /* Check if ring is aromatic (all atoms aromatic) */
+        bool is_aromatic = true;
+        for (int j = 0; j < ring->size; j++) {
+            if (!mol->atoms[ring->atoms[j]].aromatic) {
+                is_aromatic = false;
+                break;
+            }
+        }
+
+        /* Aromatic rings get high priority */
+        if (is_aromatic) {
+            score += 1000;
+        }
+
+        /* Prefer 6-membered rings (most common, best geometry) */
+        if (ring->size == 6) {
+            score += 500;
+        } else if (ring->size == 5) {
+            score += 200;
+        }
+
+        /* Add connectivity as tiebreaker */
         int connections = 0;
-        for (int j = 0; j < mol->rings[i].size; j++) {
-            int atom = mol->rings[i].atoms[j];
+        for (int j = 0; j < ring->size; j++) {
+            int atom = ring->atoms[j];
             for (int k = 0; k < mol->atoms[atom].num_neighbors; k++) {
                 int nb = mol->atoms[atom].neighbors[k];
-                /* Check if neighbor is not in this ring */
                 bool in_ring = false;
-                for (int m = 0; m < mol->rings[i].size; m++) {
-                    if (mol->rings[i].atoms[m] == nb) { in_ring = true; break; }
+                for (int m = 0; m < ring->size; m++) {
+                    if (ring->atoms[m] == nb) { in_ring = true; break; }
                 }
                 if (!in_ring) connections++;
             }
         }
-        if (connections > max_connections) {
-            max_connections = connections;
+        score += connections;
+
+        if (score > best_score) {
+            best_score = score;
             first_ring = i;
         }
     }
