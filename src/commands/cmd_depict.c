@@ -45,6 +45,7 @@ void print_depict_usage(const char* prog_name) {
     printf("  --toggle-aromaticity    Draw aromatic circles\n");
     printf("  --quality <1-100>       JPEG quality (default: 95)\n");
     printf("  -v, --verbose           Verbose output\n");
+    printf("  --debug                 Print debug information\n");
     printf("  -h, --help              Print this help\n");
     printf("\n");
     printf("Examples:\n");
@@ -81,6 +82,7 @@ int cmd_depict(int argc, char* argv[]) {
         {"line-cap",       required_argument, 0, 1016},
         {"terminal-carbons", no_argument,     0, 1017},
         {"verbose",        no_argument,       0, 'v'},
+        {"debug",          no_argument,       0, 1018},
         {"help",           no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -221,6 +223,9 @@ int cmd_depict(int argc, char* argv[]) {
                 break;
             case 1017:  /* --terminal-carbons */
                 options.terminal_carbon_labels = true;
+                break;
+            case 1018:  /* --debug */
+                options.debug = true;
                 break;
             case 'v':
                 verbose = true;

@@ -14,7 +14,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#define DEBUG_CHAIN 1
+/* Debug output controlled by ctx->options->debug */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -354,12 +354,10 @@ int layout_place_chains(layout_context_t* ctx) {
         /* Place unplaced neighbors */
         for (int i = 0; i < atom->num_neighbors; i++) {
             int nb = atom->neighbors[i];
-#if DEBUG_CHAIN
-            if (nb == 6 || curr == 7) {
+            if (ctx->options->debug && (nb == 6 || curr == 7)) {
                 fprintf(stderr, "DEBUG chain: curr=%d checking neighbor %d: in_queue=%d ring_count=%d placed=%d\n",
                         curr, nb, in_queue[nb], mol->atoms[nb].ring_count, placed[nb]);
             }
-#endif
             if (in_queue[nb]) continue;
             if (mol->atoms[nb].ring_count > 0) continue;
 

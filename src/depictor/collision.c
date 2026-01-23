@@ -12,8 +12,6 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#define DEBUG_COLLISION 1
-
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif

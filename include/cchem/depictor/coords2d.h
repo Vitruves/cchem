@@ -14,13 +14,15 @@ typedef struct {
     bool use_templates;
     int max_iterations;
     double clash_threshold;
+    bool debug;
 } coords2d_options_t;
 
 #define COORDS2D_OPTIONS_DEFAULT { \
     .bond_length = 1.5, \
     .use_templates = true, \
     .max_iterations = 500, \
-    .clash_threshold = 0.7 \
+    .clash_threshold = 0.7, \
+    .debug = false \
 }
 
 mol_coords_t* coords2d_generate(const molecule_t* mol, const coords2d_options_t* options);

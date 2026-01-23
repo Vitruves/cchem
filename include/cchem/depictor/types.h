@@ -106,6 +106,7 @@ typedef struct {
     double double_bond_offset;  /* Offset for double bonds from center line */
     double triple_bond_offset;  /* Offset for triple bonds from center line */
     bool terminal_carbon_labels; /* Show labels on terminal carbons (CH3) */
+    bool debug;                  /* Print debug information */
 } depictor_options_t;
 
 /* Default: Publication-quality rendering */
@@ -135,7 +136,8 @@ typedef struct {
     .scale_factor = 1.0, \
     .double_bond_offset = 0.12, \
     .triple_bond_offset = 0.18, \
-    .terminal_carbon_labels = false \
+    .terminal_carbon_labels = false, \
+    .debug = false \
 }
 
 /* ============== Coordinate Management ============== */

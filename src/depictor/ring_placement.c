@@ -13,7 +13,7 @@
 #include <math.h>
 #include <stdio.h>
 
-#define DEBUG_RING_PLACEMENT 1
+/* Debug output controlled by ctx->options->debug */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -280,10 +280,10 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
 
     point2d_t neighbor_pos = coords[placed_neighbor];
 
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
     fprintf(stderr, "DEBUG substituent_ring: Placing ring with anchor=%d, neighbor=%d at (%.2f, %.2f)\n",
             anchor_atom, placed_neighbor, neighbor_pos.x, neighbor_pos.y);
-#endif
+}
 
     /* Find direction away from neighbor's other connections */
     point2d_t away_dir = {1, 0};
@@ -296,10 +296,10 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
         if (placed[other] && other != anchor_atom) {
             sum = point2d_add(sum, point2d_sub(coords[other], neighbor_pos));
             cnt++;
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
             fprintf(stderr, "  neighbor %d's other connection: atom %d at (%.2f, %.2f)\n",
                     placed_neighbor, other, coords[other].x, coords[other].y);
-#endif
+}
         }
     }
 
@@ -343,10 +343,10 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
         }
     }
 
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
     fprintf(stderr, "  away_dir = (%.2f, %.2f), angle = %.1f deg\n",
             away_dir.x, away_dir.y, atan2(away_dir.y, away_dir.x) * 180 / M_PI);
-#endif
+}
 
     /* Compute ring center position */
     int n = ring->size;
@@ -354,17 +354,17 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
     point2d_t anchor_pos = point2d_add(neighbor_pos, point2d_scale(away_dir, bond_length));
     point2d_t center = point2d_add(anchor_pos, point2d_scale(away_dir, radius));
 
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
     fprintf(stderr, "  Initial: anchor_pos=(%.2f, %.2f), center=(%.2f, %.2f), radius=%.2f\n",
             anchor_pos.x, anchor_pos.y, center.x, center.y, radius);
-#endif
+}
 
     /* Check for collision with existing atoms */
     bool collision = layout_check_ring_collision(ctx, center, radius, ring, placed_neighbor);
 
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
     fprintf(stderr, "  Collision check result: %s\n", collision ? "YES" : "NO");
-#endif
+}
 
     if (collision) {
         /* Try to find collision-free angle */
@@ -372,18 +372,18 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
         double out_angle;
         if (layout_find_collision_free_angle(ctx, neighbor_pos, ring,
                                              base_angle, radius, placed_neighbor, &out_angle)) {
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
             fprintf(stderr, "  Found collision-free angle: %.1f deg (was %.1f deg)\n",
                     out_angle * 180 / M_PI, base_angle * 180 / M_PI);
-#endif
+}
             away_dir.x = cos(out_angle);
             away_dir.y = sin(out_angle);
             anchor_pos = point2d_add(neighbor_pos, point2d_scale(away_dir, bond_length));
             center = point2d_add(anchor_pos, point2d_scale(away_dir, radius));
         } else {
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
             fprintf(stderr, "  WARNING: No collision-free angle found!\n");
-#endif
+}
         }
     }
 
@@ -395,13 +395,13 @@ bool layout_place_substituent_ring(layout_context_t* ctx, const ring_t* ring,
     double start_angle = atan2(anchor_pos.y - center.y, anchor_pos.x - center.x);
     layout_place_ring_polygon(ctx, ring, center, start_angle, anchor_atom);
 
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
     fprintf(stderr, "  Final positions:\n");
     for (int i = 0; i < ring->size; i++) {
         int atom = ring->atoms[i];
         fprintf(stderr, "    atom %d: (%.2f, %.2f)\n", atom, coords[atom].x, coords[atom].y);
     }
-#endif
+}
 
     return true;
 }
@@ -500,24 +500,24 @@ int layout_place_ring_systems(layout_context_t* ctx) {
 #if 0
     /* Try template-based placement for ring systems first */
     if (ctx->options && ctx->options->use_templates && ctx->ring_systems) {
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
         fprintf(stderr, "DEBUG: Trying template matching for %d ring systems\n", ctx->num_ring_systems);
-#endif
+}
         for (int s = 0; s < ctx->num_ring_systems; s++) {
             ring_system_t* sys = &ctx->ring_systems[s];
             const ring_template_t* templ = template_find_match(ctx, sys);
 
             if (templ) {
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
                 fprintf(stderr, "DEBUG: Found template '%s' for system %d\n", templ->name, s);
-#endif
+}
                 point2d_t center;
                 double rotation;
                 if (template_find_transformation(ctx, sys, templ, &center, &rotation)) {
                     if (template_apply(ctx, sys, templ, center, bond_length, rotation)) {
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
                         fprintf(stderr, "DEBUG: Applied template to system %d\n", s);
-#endif
+}
                         sys->placed = true;
                         /* Mark all rings in system as placed */
                         for (int r = 0; r < sys->num_rings; r++) {
@@ -533,13 +533,13 @@ int layout_place_ring_systems(layout_context_t* ctx) {
     /* Find most connected ring to start (if not already placed) */
     int first_ring = find_most_connected_ring(mol);
 
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
     fprintf(stderr, "DEBUG ring_placement: first_ring=%d, ring_placed states: ", first_ring);
     for (int i = 0; i < nr; i++) {
         fprintf(stderr, "%d:%s ", i, ring_placed[i] ? "T" : "F");
     }
     fprintf(stderr, "\n");
-#endif
+}
 
     if (first_ring >= 0 && !ring_placed[first_ring]) {
         double start_angle = M_PI / 2.0 + M_PI / mol->rings[first_ring].size;
@@ -547,9 +547,9 @@ int layout_place_ring_systems(layout_context_t* ctx) {
                                   (point2d_t){0, 0}, start_angle,
                                   mol->rings[first_ring].atoms[0]);
         ring_placed[first_ring] = true;
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
         fprintf(stderr, "DEBUG: Placed first ring %d at origin\n", first_ring);
-#endif
+}
     }
 
     /* Iteratively place fused rings in the first ring system */
@@ -571,9 +571,9 @@ int layout_place_ring_systems(layout_context_t* ctx) {
 
             if (placed_count >= 2) {
                 /* Fused ring - use existing placement */
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
                 fprintf(stderr, "DEBUG: Placing fused ring %d (placed_count=%d)\n", r, placed_count);
-#endif
+}
                 if (layout_place_fused_ring(ctx, &mol->rings[r])) {
                     ring_placed[r] = true;
                     progress = true;
@@ -582,9 +582,9 @@ int layout_place_ring_systems(layout_context_t* ctx) {
         }
     }
 
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
     fprintf(stderr, "DEBUG: After fused ring placement, calling layout_place_chains\n");
-#endif
+}
 
     /* CRITICAL: Place chain atoms connecting to first ring system before processing remaining rings
      * This allows rings connected via chains to find placed neighbors */
@@ -612,9 +612,9 @@ int layout_place_ring_systems(layout_context_t* ctx) {
 
             if (placed_count >= 2) {
                 /* Fused ring */
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
                 fprintf(stderr, "DEBUG remaining: Placing fused ring %d\n", r);
-#endif
+}
                 if (layout_place_fused_ring(ctx, ring)) {
                     ring_placed[r] = true;
                     remaining_progress = true;
@@ -622,9 +622,9 @@ int layout_place_ring_systems(layout_context_t* ctx) {
             } else if (placed_count == 1) {
                 /* Spiro ring - one atom placed, place ring around it */
                 int anchor_atom = ring->atoms[placed_ring_idx];
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
                 fprintf(stderr, "DEBUG remaining: Placing spiro ring %d, anchor=%d\n", r, anchor_atom);
-#endif
+}
                 if (layout_place_spiro_ring(ctx, ring, anchor_atom)) {
                     ring_placed[r] = true;
                     remaining_progress = true;
@@ -649,23 +649,23 @@ int layout_place_ring_systems(layout_context_t* ctx) {
 
                 if (anchor_ring_idx >= 0) {
                     int anchor_atom = ring->atoms[anchor_ring_idx];
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
                     fprintf(stderr, "DEBUG remaining: Placing substituent ring %d, anchor=%d, neighbor=%d\n",
                             r, anchor_atom, placed_neighbor);
-#endif
+}
                     if (layout_place_substituent_ring(ctx, ring,
                                                       anchor_atom, placed_neighbor)) {
                         ring_placed[r] = true;
                         remaining_progress = true;
                     }
                 } else {
-#if DEBUG_RING_PLACEMENT
+if (ctx->options->debug) {
                     fprintf(stderr, "DEBUG remaining: Ring %d (atoms:", r);
                     for (int i = 0; i < ring->size; i++) {
                         fprintf(stderr, " %d", ring->atoms[i]);
                     }
                     fprintf(stderr, ") has no placed neighbor - skipping\n");
-#endif
+}
                 }
                 /* Skip disconnected rings for now - will place in final pass */
             }

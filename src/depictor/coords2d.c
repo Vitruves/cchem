@@ -14,12 +14,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-/* Debug flag - set to 1 to enable debug output */
-#define DEBUG_LAYOUT 1
-
-#if DEBUG_LAYOUT
 #include <stdio.h>
-#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -49,89 +44,89 @@ mol_coords_t* coords2d_generate(const molecule_t* mol, const coords2d_options_t*
     /* Detect and classify ring systems */
     layout_detect_ring_systems(ctx);
 
-#if DEBUG_LAYOUT
-    /* Print atom elements and bonds */
-    fprintf(stderr, "DEBUG: Atom elements:\n");
-    for (int i = 0; i < mol->num_atoms; i++) {
-        fprintf(stderr, "  %2d: elem=%d ring=%d neighbors:", i, mol->atoms[i].element, mol->atoms[i].ring_count);
-        for (int j = 0; j < mol->atoms[i].num_neighbors; j++) {
-            fprintf(stderr, " %d", mol->atoms[i].neighbors[j]);
-        }
-        fprintf(stderr, "\n");
-    }
-    fprintf(stderr, "DEBUG: Double bonds:\n");
-    for (int i = 0; i < mol->num_bonds; i++) {
-        if (mol->bonds[i].type == BOND_DOUBLE) {
-            fprintf(stderr, "  %d-%d\n", mol->bonds[i].atom1, mol->bonds[i].atom2);
-        }
-    }
-    fprintf(stderr, "DEBUG: Detected %d ring systems, %d total rings\n",
-            ctx->num_ring_systems, mol->num_rings);
-    for (int s = 0; s < ctx->num_ring_systems; s++) {
-        ring_system_t* sys = &ctx->ring_systems[s];
-        fprintf(stderr, "  System %d: %d rings, type=%d, atoms: ",
-                s, sys->num_rings, sys->type);
-        for (int i = 0; i < sys->num_atoms; i++) {
-            fprintf(stderr, "%d ", sys->all_atoms[i]);
-        }
-        fprintf(stderr, "\n");
-    }
-    fprintf(stderr, "DEBUG: Ring contents:\n");
-    for (int r = 0; r < mol->num_rings; r++) {
-        fprintf(stderr, "  Ring %d (%d atoms): ", r, mol->rings[r].size);
-        for (int i = 0; i < mol->rings[r].size; i++) {
-            fprintf(stderr, "%d ", mol->rings[r].atoms[i]);
-        }
-        fprintf(stderr, "\n");
-    }
-    fprintf(stderr, "DEBUG: Connectivity for key atoms:\n");
-    int key_atoms[] = {2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30};
-    for (int k = 0; k < 26; k++) {
-        int i = key_atoms[k];
-        if (i < mol->num_atoms) {
-            fprintf(stderr, "  Atom %d neighbors: ", i);
+    if (opts->debug) {
+        /* Print atom elements and bonds */
+        fprintf(stderr, "DEBUG: Atom elements:\n");
+        for (int i = 0; i < mol->num_atoms; i++) {
+            fprintf(stderr, "  %2d: elem=%d ring=%d neighbors:", i, mol->atoms[i].element, mol->atoms[i].ring_count);
             for (int j = 0; j < mol->atoms[i].num_neighbors; j++) {
-                fprintf(stderr, "%d ", mol->atoms[i].neighbors[j]);
+                fprintf(stderr, " %d", mol->atoms[i].neighbors[j]);
             }
             fprintf(stderr, "\n");
         }
+        fprintf(stderr, "DEBUG: Double bonds:\n");
+        for (int i = 0; i < mol->num_bonds; i++) {
+            if (mol->bonds[i].type == BOND_DOUBLE) {
+                fprintf(stderr, "  %d-%d\n", mol->bonds[i].atom1, mol->bonds[i].atom2);
+            }
+        }
+        fprintf(stderr, "DEBUG: Detected %d ring systems, %d total rings\n",
+                ctx->num_ring_systems, mol->num_rings);
+        for (int s = 0; s < ctx->num_ring_systems; s++) {
+            ring_system_t* sys = &ctx->ring_systems[s];
+            fprintf(stderr, "  System %d: %d rings, type=%d, atoms: ",
+                    s, sys->num_rings, sys->type);
+            for (int i = 0; i < sys->num_atoms; i++) {
+                fprintf(stderr, "%d ", sys->all_atoms[i]);
+            }
+            fprintf(stderr, "\n");
+        }
+        fprintf(stderr, "DEBUG: Ring contents:\n");
+        for (int r = 0; r < mol->num_rings; r++) {
+            fprintf(stderr, "  Ring %d (%d atoms): ", r, mol->rings[r].size);
+            for (int i = 0; i < mol->rings[r].size; i++) {
+                fprintf(stderr, "%d ", mol->rings[r].atoms[i]);
+            }
+            fprintf(stderr, "\n");
+        }
+        fprintf(stderr, "DEBUG: Connectivity for key atoms:\n");
+        int key_atoms[] = {2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30};
+        for (int k = 0; k < 26; k++) {
+            int i = key_atoms[k];
+            if (i < mol->num_atoms) {
+                fprintf(stderr, "  Atom %d neighbors: ", i);
+                for (int j = 0; j < mol->atoms[i].num_neighbors; j++) {
+                    fprintf(stderr, "%d ", mol->atoms[i].neighbors[j]);
+                }
+                fprintf(stderr, "\n");
+            }
+        }
     }
-#endif
 
     /* Place ring systems (includes chain placement between rings) */
     layout_place_ring_systems(ctx);
 
-#if DEBUG_LAYOUT
-    fprintf(stderr, "DEBUG: After ring placement, placed atoms:\n");
-    int placed_count = 0;
-    for (int i = 0; i < mol->num_atoms; i++) {
-        if (ctx->placed[i]) {
-            placed_count++;
-            fprintf(stderr, "  Atom %d: (%.2f, %.2f)\n", i,
-                    result->coords_2d[i].x, result->coords_2d[i].y);
+    if (opts->debug) {
+        fprintf(stderr, "DEBUG: After ring placement, placed atoms:\n");
+        int placed_count = 0;
+        for (int i = 0; i < mol->num_atoms; i++) {
+            if (ctx->placed[i]) {
+                placed_count++;
+                fprintf(stderr, "  Atom %d: (%.2f, %.2f)\n", i,
+                        result->coords_2d[i].x, result->coords_2d[i].y);
+            }
         }
+        fprintf(stderr, "  Total placed: %d/%d\n", placed_count, mol->num_atoms);
     }
-    fprintf(stderr, "  Total placed: %d/%d\n", placed_count, mol->num_atoms);
-#endif
 
     /* Final chain placement for any remaining atoms */
     layout_place_chains(ctx);
 
-#if DEBUG_LAYOUT
-    fprintf(stderr, "DEBUG: After final chain placement:\n");
-    int final_placed = 0;
-    for (int i = 0; i < mol->num_atoms; i++) {
-        if (ctx->placed[i]) final_placed++;
-    }
-    fprintf(stderr, "  Total placed: %d/%d\n", final_placed, mol->num_atoms);
-    if (final_placed < mol->num_atoms) {
-        fprintf(stderr, "  Unplaced atoms: ");
+    if (opts->debug) {
+        fprintf(stderr, "DEBUG: After final chain placement:\n");
+        int final_placed = 0;
         for (int i = 0; i < mol->num_atoms; i++) {
-            if (!ctx->placed[i]) fprintf(stderr, "%d ", i);
+            if (ctx->placed[i]) final_placed++;
         }
-        fprintf(stderr, "\n");
+        fprintf(stderr, "  Total placed: %d/%d\n", final_placed, mol->num_atoms);
+        if (final_placed < mol->num_atoms) {
+            fprintf(stderr, "  Unplaced atoms: ");
+            for (int i = 0; i < mol->num_atoms; i++) {
+                if (!ctx->placed[i]) fprintf(stderr, "%d ", i);
+            }
+            fprintf(stderr, "\n");
+        }
     }
-#endif
 
     /* Handle disconnected atoms */
     point2d_t* coords = result->coords_2d;

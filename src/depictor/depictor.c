@@ -20,14 +20,12 @@ typedef struct {
     bool* has_double;       /* has_double[atom] = true if atom already has a double bond */
     bool* bond_is_double;   /* Result: which aromatic bonds become double */
     molecule_t* mol;
+    bool debug;             /* Print debug information */
 } kekule_state_t;
 
 /* Check if aromatic atom contributes lone pair instead of needing double bond */
 static bool atom_has_lone_pair_contribution(const atom_t* atom, const molecule_t* mol) {
     if (!atom->aromatic) {
-        if (atom->element == ELEM_N) {
-            fprintf(stderr, "DEBUG kekule: N atom %d NOT aromatic, skipping lone pair check\n", atom->index);
-        }
         return false;
     }
 
@@ -209,8 +207,7 @@ static bool kekule_solve(kekule_state_t* state, int bond_idx) {
     if (a1_lone_pair) a1_has_double = true;
     if (a2_lone_pair) a2_has_double = true;
 
-    static int debug_depth = 0;
-    if (debug_depth < 3) {
+    if (state->debug && bond_idx < 3) {
         fprintf(stderr, "DEBUG kekule[%d]: bond %d-%d, a1_has_dbl=%d, a2_has_dbl=%d, a1_lp=%d, a2_lp=%d\n",
                 bond_idx, a1, a2, a1_has_double, a2_has_double, a1_lone_pair, a2_lone_pair);
     }
@@ -239,10 +236,11 @@ static bool kekule_solve(kekule_state_t* state, int bond_idx) {
     return kekule_solve(state, bond_idx + 1);
 }
 
-static void kekulize_molecule(molecule_t* mol) {
+static void kekulize_molecule(molecule_t* mol, bool debug) {
     /* Collect aromatic bonds and atoms */
     kekule_state_t state;
     state.mol = mol;
+    state.debug = debug;
     state.arom_bond_idx = malloc(mol->num_bonds * sizeof(int));
     state.num_arom_bonds = 0;
 
@@ -283,13 +281,15 @@ static void kekulize_molecule(molecule_t* mol) {
     /* Solve using backtracking - constraint propagation is built into the solver */
     bool success = kekule_solve(&state, 0);
 
-    fprintf(stderr, "DEBUG kekule: solve returned %s\n", success ? "SUCCESS" : "FAILED");
+    if (state.debug) {
+        fprintf(stderr, "DEBUG kekule: solve returned %s\n", success ? "SUCCESS" : "FAILED");
+    }
     if (success) {
         /* Apply the solution */
         for (int i = 0; i < state.num_arom_bonds; i++) {
             int b = state.arom_bond_idx[i];
             mol->bonds[b].type = state.bond_is_double[i] ? BOND_DOUBLE : BOND_SINGLE;
-            if (state.bond_is_double[i]) {
+            if (state.debug && state.bond_is_double[i]) {
                 fprintf(stderr, "DEBUG kekule: bond %d (%d-%d) assigned DOUBLE\n",
                         b, mol->bonds[b].atom1, mol->bonds[b].atom2);
             }
@@ -427,7 +427,7 @@ cchem_status_t depict_molecule(const molecule_t* mol, const char* filename,
 
     /* Kekulize if not drawing aromatic circles */
     if (!opts.draw_aromatic_circles) {
-        kekulize_molecule(work_mol);
+        kekulize_molecule(work_mol, opts.debug);
     }
 
     /* Generate coordinates */
@@ -449,6 +449,7 @@ cchem_status_t depict_molecule(const molecule_t* mol, const char* filename,
     } else {
         coords2d_options_t c2d_opts = COORDS2D_OPTIONS_DEFAULT;
         c2d_opts.bond_length = opts.bond_length / 25.0;
+        c2d_opts.debug = opts.debug;
         coords = coords2d_generate(work_mol, &c2d_opts);
     }
 
@@ -572,7 +573,7 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
 
     /* Kekulize if not drawing aromatic circles */
     if (!opts.draw_aromatic_circles) {
-        kekulize_molecule(work_mol);
+        kekulize_molecule(work_mol, opts.debug);
     }
 
     /* Generate coordinates */
@@ -600,6 +601,7 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
     } else {
         coords2d_options_t c2d_opts = COORDS2D_OPTIONS_DEFAULT;
         c2d_opts.bond_length = opts.bond_length / 25.0;
+        c2d_opts.debug = opts.debug;
         coords = coords2d_generate(work_mol, &c2d_opts);
     }
 
