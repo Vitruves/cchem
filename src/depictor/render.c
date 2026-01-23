@@ -1028,15 +1028,18 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
             double dbl_offset = opts->double_bond_offset * opts->bond_length;
             double trpl_offset = opts->triple_bond_offset * opts->bond_length;
 
-            /* Check stereochemistry */
-            if (bond->stereo_type == BOND_UP) {
+            /* Check stereochemistry - only draw wedge/dash for tetrahedral chirality,
+             * not for E/Z double bond indicators (which also use BOND_UP/DOWN) */
+            bool is_chiral_bond = (mol->atoms[i].chirality != CHIRALITY_NONE ||
+                                   mol->atoms[j].chirality != CHIRALITY_NONE);
+            if (bond->stereo_type == BOND_UP && is_chiral_bond) {
                 point2d_t stereo_gp1 = gp1, stereo_gp2 = gp2;
                 if (bond->stereo_atom == j) {
                     stereo_gp1 = gp2; stereo_gp2 = gp1;
                 }
                 render_wedge_bond(ctx->cr, stereo_gp1, stereo_gp2, bond_width);
             }
-            else if (bond->stereo_type == BOND_DOWN) {
+            else if (bond->stereo_type == BOND_DOWN && is_chiral_bond) {
                 point2d_t stereo_gp1 = gp1, stereo_gp2 = gp2;
                 if (bond->stereo_atom == j) {
                     stereo_gp1 = gp2; stereo_gp2 = gp1;
