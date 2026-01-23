@@ -26,10 +26,33 @@ typedef struct {
 static bool atom_has_lone_pair_contribution(const atom_t* atom, const molecule_t* mol) {
     if (!atom->aromatic) return false;
 
-    /* Pyrrole-type nitrogen: aromatic N with 2 neighbors that has implicit H */
+    /* Pyrrole-type nitrogen: aromatic N that contributes lone pair */
     if (atom->element == ELEM_N) {
         /* Check for explicit H first */
         if (atom->h_count > 0) return true;
+
+        /* Check what rings this N is in */
+        bool in_5_ring = false;
+        bool in_6_ring = false;
+
+        for (int r = 0; r < mol->num_rings; r++) {
+            const ring_t* ring = &mol->rings[r];
+            for (int i = 0; i < ring->size; i++) {
+                if (ring->atoms[i] == atom->index) {
+                    if (ring->size == 5) in_5_ring = true;
+                    if (ring->size == 6) in_6_ring = true;
+                    break;
+                }
+            }
+        }
+
+        /* Aromatic N with 3 neighbors in a 5-membered ring:
+         * This is like pyrrole N with a substituent (e.g., N-phenyl triazole).
+         * The N contributes its lone pair to aromaticity and should NOT
+         * have a double bond (already has 3 single bonds). */
+        if (atom->num_neighbors == 3 && in_5_ring) {
+            return true;
+        }
 
         /* Aromatic N with exactly 2 neighbors:
          * - Pyrrole-type: contributes lone pair, needs implicit H -> no double bond
@@ -37,26 +60,8 @@ static bool atom_has_lone_pair_contribution(const atom_t* atom, const molecule_t
          *
          * Distinguish by ring size: 5-ring = pyrrole, 6-ring = pyridine
          * BUT in complex fused systems, SSSR might not find the 5-ring.
-         *
-         * Alternative: count aromatic bonds. If N has 2 aromatic bonds,
-         * check if it's in a 6-ring. If not found in 6-ring, assume pyrrole-type.
          */
         if (atom->num_neighbors == 2 && atom->ring_count > 0) {
-            /* First check if in a 5-membered ring */
-            bool in_5_ring = false;
-            bool in_6_ring = false;
-
-            for (int r = 0; r < mol->num_rings; r++) {
-                const ring_t* ring = &mol->rings[r];
-                for (int i = 0; i < ring->size; i++) {
-                    if (ring->atoms[i] == atom->index) {
-                        if (ring->size == 5) in_5_ring = true;
-                        if (ring->size == 6) in_6_ring = true;
-                        break;
-                    }
-                }
-            }
-
             /* Pyrrole-type if in 5-ring, or if NOT in any 6-ring
              * (handles cases where 5-ring isn't in SSSR but we know
              * it's not pyridine because not in a 6-ring) */

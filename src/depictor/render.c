@@ -1057,22 +1057,62 @@ cchem_status_t render_molecule(render_context_t* ctx, const molecule_t* mol,
             else if (order == 2) {
                 point2d_t dir = point2d_sub(p2, p1);
                 point2d_t perp = point2d_normalize(point2d_perp(dir));
-                point2d_t offset = point2d_scale(perp, dbl_offset);
 
-                /* Offset from gapped center line */
-                point2d_t gp1a = point2d_add(gp1, offset);
-                point2d_t gp2a = point2d_add(gp2, offset);
-                point2d_t gp1b = point2d_sub(gp1, offset);
-                point2d_t gp2b = point2d_sub(gp2, offset);
+                /* For ring bonds, offset inner line toward ring center only */
+                if (bond->in_ring && bond->num_rings > 0 && mol->rings_computed) {
+                    /* Find ring center */
+                    int ring_idx = bond->ring_ids[0];
+                    point2d_t ring_center = {0, 0};
+                    for (int ri = 0; ri < mol->rings[ring_idx].size; ri++) {
+                        ring_center = point2d_add(ring_center, coords->coords_2d[mol->rings[ring_idx].atoms[ri]]);
+                    }
+                    ring_center = point2d_scale(ring_center, 1.0 / mol->rings[ring_idx].size);
 
-                if (use_colored_sticks) {
-                    render_stick_bond_ex(ctx->cr, mol, bond, gp1a, gp2a, bond_width * 0.7, opts->line_cap);
-                    render_stick_bond_ex(ctx->cr, mol, bond, gp1b, gp2b, bond_width * 0.7, opts->line_cap);
+                    /* Bond midpoint */
+                    point2d_t bond_mid = point2d_scale(point2d_add(p1, p2), 0.5);
+
+                    /* Determine which perpendicular direction points toward ring center */
+                    point2d_t to_center = point2d_sub(ring_center, bond_mid);
+                    double dot = perp.x * to_center.x + perp.y * to_center.y;
+                    point2d_t inward = (dot > 0) ? perp : point2d_scale(perp, -1.0);
+
+                    /* Outer line on bond edge, inner line offset toward center */
+                    point2d_t inner_offset = point2d_scale(inward, dbl_offset * 2.4);
+                    point2d_t gp1_inner = point2d_add(gp1, inner_offset);
+                    point2d_t gp2_inner = point2d_add(gp2, inner_offset);
+
+                    /* Shorten inner line slightly for better appearance */
+                    point2d_t shorten = point2d_scale(dir, 0.12);
+                    gp1_inner = point2d_add(gp1_inner, shorten);
+                    gp2_inner = point2d_sub(gp2_inner, shorten);
+
+                    if (use_colored_sticks) {
+                        render_stick_bond_ex(ctx->cr, mol, bond, gp1, gp2, bond_width, opts->line_cap);
+                        render_stick_bond_ex(ctx->cr, mol, bond, gp1_inner, gp2_inner, bond_width * 0.7, opts->line_cap);
+                    } else {
+                        rgb_color_t black = {0, 0, 0};
+                        set_color(ctx->cr, black);
+                        draw_line_ex(ctx->cr, gp1, gp2, bond_width, opts->line_cap);
+                        draw_line_ex(ctx->cr, gp1_inner, gp2_inner, bond_width, opts->line_cap);
+                    }
                 } else {
-                    rgb_color_t black = {0, 0, 0};
-                    set_color(ctx->cr, black);
-                    draw_line_ex(ctx->cr, gp1a, gp2a, bond_width, opts->line_cap);
-                    draw_line_ex(ctx->cr, gp1b, gp2b, bond_width, opts->line_cap);
+                    /* Non-ring double bond: symmetric offset */
+                    point2d_t offset = point2d_scale(perp, dbl_offset);
+
+                    point2d_t gp1a = point2d_add(gp1, offset);
+                    point2d_t gp2a = point2d_add(gp2, offset);
+                    point2d_t gp1b = point2d_sub(gp1, offset);
+                    point2d_t gp2b = point2d_sub(gp2, offset);
+
+                    if (use_colored_sticks) {
+                        render_stick_bond_ex(ctx->cr, mol, bond, gp1a, gp2a, bond_width * 0.7, opts->line_cap);
+                        render_stick_bond_ex(ctx->cr, mol, bond, gp1b, gp2b, bond_width * 0.7, opts->line_cap);
+                    } else {
+                        rgb_color_t black = {0, 0, 0};
+                        set_color(ctx->cr, black);
+                        draw_line_ex(ctx->cr, gp1a, gp2a, bond_width, opts->line_cap);
+                        draw_line_ex(ctx->cr, gp1b, gp2b, bond_width, opts->line_cap);
+                    }
                 }
             }
             else if (order == 3) {
