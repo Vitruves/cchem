@@ -67,11 +67,11 @@ High-performance cheminformatics library written in pure C.
 - 2D coordinate generation with automatic layout
 - 3D coordinate generation with MMFF94 force field optimization
 - Render styles: wireframe, sticks, ball-and-stick, spacefill, surface
-- JPEG output with configurable quality
+- PNG, SVG, and JPEG output with configurable quality
 - Atom coloring by element (CPK scheme)
 
 ### Dataset Utilities
-- CSV batch processing with parallel execution
+- CSV and Parquet batch processing with parallel execution
 - Dataset splitting: random, scaffold-based (Murcko), stratified
 - Configurable train/validation/test ratios
 
@@ -93,6 +93,7 @@ High-performance cheminformatics library written in pure C.
 | libjpeg | JPEG image output |
 | pthreads | Parallel processing |
 | libm | Mathematics functions |
+| carquet | Apache Parquet file support (fetched automatically via CMake) |
 
 ### macOS (Homebrew)
 
@@ -159,8 +160,9 @@ make -j$(nproc)
 # Single molecule with specific descriptors
 ./cchem compute -S "CCO" -d CarbonCount,HydrogenCount,MolecularWeight
 
-# All descriptors for a dataset
+# All descriptors for a dataset (CSV or Parquet)
 ./cchem compute -f data.csv -s smiles -d all -o descriptors.csv -n 8
+./cchem compute -f data.parquet -s smiles -d all -o descriptors.parquet -n 8
 
 # List available descriptors
 ./cchem compute --list
@@ -169,8 +171,8 @@ make -j$(nproc)
 ### Generate Molecular Images
 
 ```bash
-# 2D depiction
-./cchem depict -S "c1ccccc1" -o benzene.jpg -m 2d
+# 2D depiction (supports .jpg, .png, .svg output)
+./cchem depict -S "c1ccccc1" -o benzene.png -m 2d
 
 # 3D with MMFF94 optimization
 ./cchem depict -S "CCO" -o ethanol.jpg -m 3d -s balls-sticks --max-iter 500
@@ -247,7 +249,7 @@ Usage: cchem depict [options]
 
 Options:
   -S, --smiles <string>     SMILES string to depict
-  -o, --output <path>       Output JPEG file path
+  -o, --output <path>       Output file path (.jpg, .png, or .svg)
   -m, --mode <2d|3d>        Rendering mode (default: 2d)
   -s, --style <style>       Render style:
                               wireframe    - Simple lines
@@ -262,11 +264,19 @@ Options:
   --margin <pixels>         Image margin (default: 20)
   --show-carbons            Show carbon atom labels
   --show-hydrogens          Show hydrogen atoms
+  --terminal-carbons        Show terminal carbon labels (e.g., CH3)
   --toggle-aromaticity      Toggle aromatic ring display
+  --colored-atoms           Color heteroatom labels by element
+  --proportional-atoms      Scale atom labels proportionally
   --atom-filling <float>    Atom sphere filling (0.0-1.0)
   --quality <int>           JPEG quality (1-100, default: 90)
   --max-iter <int>          Max MMFF94 iterations (default: 200)
   --surface-color <hex>     Surface color (e.g., 0x808080)
+  --scale <float>           Scale factor for rendering
+  --font-scale <float>      Font scale factor
+  --heteroatom-gap <float>  Gap around heteroatom labels
+  --line-cap <style>        Line cap style (butt, round, square)
+  --debug                   Enable debug output
 ```
 
 ### split
@@ -280,6 +290,7 @@ Options:
   -f, --file <path>              Input CSV file
   -o, --output <paths>           Comma-separated output file paths
   -s, --smiles-col <name>        Column containing SMILES (default: smiles)
+  -n, --threads <num>            Number of threads for processing
   --split-ratios <ratios>        Comma-separated percentages (default: 80,20)
   --splitting-method <method>    Splitting method:
                                    random   - Random split
@@ -313,7 +324,7 @@ cchem help       # Show help message
 
 - CMake 3.16+
 - C11 compatible compiler (GCC, Clang)
-- Dependencies: igraph, cairo, libjpeg
+- Dependencies: cairo, libjpeg
 
 ### Build Commands
 
@@ -327,10 +338,13 @@ make -j$(nproc)
 
 ```bash
 # Debug build with sanitizers
-cmake -DCMAKE_BUILD_TYPE=Debug ..
+cmake -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON ..
 
-# Release build with LTO
+# Release build with LTO (default)
 cmake -DCMAKE_BUILD_TYPE=Release ..
+
+# Disable native architecture optimization
+cmake -DENABLE_NATIVE_ARCH=OFF ..
 ```
 
 ### Running Tests
