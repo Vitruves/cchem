@@ -190,8 +190,37 @@ message(STATUS "Native arch optimization: ${ENABLE_NATIVE_ARCH}")
 # Find required libraries
 find_package(Threads REQUIRED)
 find_package(JPEG REQUIRED)
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(CAIRO REQUIRED cairo)
+
+# Find Cairo - use different methods per platform
+option(WITH_CAIRO "Build with Cairo support for 2D rendering" ON)
+if(WITH_CAIRO)
+    if(WIN32)
+        # On Windows with vcpkg, use find_package directly
+        find_package(unofficial-cairo CONFIG)
+        if(unofficial-cairo_FOUND)
+            set(CAIRO_FOUND TRUE)
+            set(CAIRO_LIBRARIES unofficial::cairo::cairo)
+            set(CAIRO_INCLUDE_DIRS "")  # vcpkg handles this via target
+        else()
+            # Fallback: try cairo directly
+            find_package(Cairo CONFIG)
+            if(Cairo_FOUND)
+                set(CAIRO_FOUND TRUE)
+                set(CAIRO_LIBRARIES Cairo::Cairo)
+                set(CAIRO_INCLUDE_DIRS "")
+            endif()
+        endif()
+    else()
+        # On Unix, use pkg-config
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(CAIRO REQUIRED cairo)
+    endif()
+
+    if(NOT CAIRO_FOUND)
+        message(WARNING "Cairo not found - 2D rendering will be disabled")
+        set(WITH_CAIRO OFF)
+    endif()
+endif()
 
 # Fetch and build carquet library for Parquet support
 include(FetchContent)
@@ -215,7 +244,9 @@ message(STATUS "carquet available for Parquet support")
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${JPEG_INCLUDE_DIR})
-include_directories(${CAIRO_INCLUDE_DIRS})
+if(WITH_CAIRO AND CAIRO_INCLUDE_DIRS)
+    include_directories(${CAIRO_INCLUDE_DIRS})
+endif()
 include_directories(${carquet_SOURCE_DIR}/include)
 
 # Library sources
@@ -294,8 +325,13 @@ set(CCHEM_SOURCES
 
 # Create static library
 add_library(cchem_lib STATIC ${CCHEM_SOURCES})
-target_link_libraries(cchem_lib PRIVATE Threads::Threads m ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
-target_link_directories(cchem_lib PRIVATE ${CAIRO_LIBRARY_DIRS})
+target_link_libraries(cchem_lib PRIVATE Threads::Threads ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
+if(NOT WIN32)
+    target_link_libraries(cchem_lib PRIVATE m)
+endif()
+if(CAIRO_LIBRARY_DIRS)
+    target_link_directories(cchem_lib PRIVATE ${CAIRO_LIBRARY_DIRS})
+endif()
 if(HAVE_CARQUET)
     target_link_libraries(cchem_lib PRIVATE carquet)
     target_compile_definitions(cchem_lib PRIVATE HAVE_PARQUET=1)
@@ -310,7 +346,10 @@ add_executable(cchem
     src/commands/cmd_depict.c
     src/commands/cmd_split.c
 )
-target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads m ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
+target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
+if(NOT WIN32)
+    target_link_libraries(cchem PRIVATE m)
+endif()
 if(HAVE_CARQUET)
     target_compile_definitions(cchem PRIVATE HAVE_PARQUET=1)
     target_link_libraries(cchem PRIVATE carquet)
