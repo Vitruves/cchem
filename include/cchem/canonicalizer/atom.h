@@ -33,6 +33,7 @@ typedef struct atom {
     int ring_count;              /* Number of rings containing this atom */
     int implicit_h_count;        /* Computed implicit hydrogens */
     int total_bond_order;        /* Sum of bond orders */
+    int pi_electrons;            /* Pi electrons contributed to aromaticity (1=pyridine-type, 2=pyrrole-type) */
 
     /* Canonicalization */
     uint64_t invariant;          /* Canonical invariant */
@@ -44,6 +45,13 @@ typedef struct atom {
     int input_order;             /* Position in original SMILES */
     int stereo_neighbors[MAX_NEIGHBORS]; /* Neighbors in original order */
     int num_stereo_neighbors;
+
+    /* Ring opening tracking for correct stereo neighbor order.
+     * When a ring opens at a chiral atom, we record where it should go
+     * in stereo_neighbors, then insert the closing atom there later. */
+    int ring_open_slots[10];     /* Position in stereo_neighbors for each ring opening */
+    int ring_open_nums[10];      /* Ring number for each slot */
+    int num_ring_opens;          /* Number of pending ring openings */
 } atom_t;
 
 /* Create a new atom */

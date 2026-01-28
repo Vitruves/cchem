@@ -276,44 +276,67 @@ chirality_t stereo_permute_chirality(chirality_t orig, const int* old_order,
     }
 
     int parity = permutation_parity(perm, n);
+
+#if 0  /* Debug */
+    fprintf(stderr, "  permutation: ");
+    for (int i = 0; i < n; i++) fprintf(stderr, "%d ", perm[i]);
+    fprintf(stderr, "-> parity=%d\n", parity);
+#endif
+
     free(perm);
 
+    chirality_t result = orig;
     /* Odd parity inverts chirality */
     if (parity % 2 == 1) {
-        if (orig == CHIRALITY_CW) return CHIRALITY_CCW;
-        if (orig == CHIRALITY_CCW) return CHIRALITY_CW;
+        if (orig == CHIRALITY_CW) result = CHIRALITY_CCW;
+        if (orig == CHIRALITY_CCW) result = CHIRALITY_CW;
     }
 
-    return orig;
+    return result;
 }
 
 chirality_t stereo_get_canonical_chirality(const molecule_t* mol, int atom_idx,
-                                           int from_atom, const int* output_order) {
+                                           int from_atom, const bool* visited) {
     const atom_t* atom = molecule_get_atom_const(mol, atom_idx);
     if (!atom || atom->chirality == CHIRALITY_NONE) return CHIRALITY_NONE;
-
-    (void)output_order;  /* Unused currently */
 
     /*
      * Get original neighbor order from parsing.
      * For bracket atoms like [C@H], the order in SMILES is:
-     * 1. From-atom (implicit, the atom we came from in the chain)
+     * 1. From-atom (implicit, the atom we came from in the chain) - if present
      * 2. H (explicitly written in bracket notation)
-     * 3. Branch atoms (in parentheses)
+     * 3. Branch atoms / ring closures
      * 4. Main chain continuation
      *
-     * stereo_neighbors stores: [from, branch1, branch2, ...]
-     * We need to insert H at position 1 (after from-atom) for correct stereo.
+     * stereo_neighbors stores: [from, branch1, branch2, ...] if there was a from-atom
+     * For atoms at the START of SMILES (no from-atom), stereo_neighbors just has
+     * the neighbors in SMILES order.
      */
     int orig_neighbors[4];
     int num_orig = 0;
 
+    /* Check if this atom had a from-atom in the original SMILES */
+    bool had_from_atom = false;
+    if (atom->num_stereo_neighbors > 0) {
+        /* Use from_atom parameter: if from_atom >= 0, there's a from-atom in canon order,
+         * so there was likely one in original too. If from_atom < 0, this is start atom. */
+        had_from_atom = (from_atom >= 0) || (atom->stereo_neighbors[0] < atom->index);
+    }
+
     if (atom->implicit_h_count > 0 && atom->num_stereo_neighbors > 0) {
-        /* For [C@H] notation: from-atom first, then H, then rest */
-        orig_neighbors[num_orig++] = atom->stereo_neighbors[0];  /* from-atom */
-        orig_neighbors[num_orig++] = -1;  /* H at position 1 */
-        for (int i = 1; i < atom->num_stereo_neighbors && num_orig < 4; i++) {
-            orig_neighbors[num_orig++] = atom->stereo_neighbors[i];
+        if (had_from_atom) {
+            /* For [C@H] notation with from-atom: from-atom first, then H, then rest */
+            orig_neighbors[num_orig++] = atom->stereo_neighbors[0];  /* from-atom */
+            orig_neighbors[num_orig++] = -1;  /* H at position 1 */
+            for (int i = 1; i < atom->num_stereo_neighbors && num_orig < 4; i++) {
+                orig_neighbors[num_orig++] = atom->stereo_neighbors[i];
+            }
+        } else {
+            /* For [C@H] at START of SMILES (no from-atom): H first, then neighbors */
+            orig_neighbors[num_orig++] = -1;  /* H first in bracket notation */
+            for (int i = 0; i < atom->num_stereo_neighbors && num_orig < 4; i++) {
+                orig_neighbors[num_orig++] = atom->stereo_neighbors[i];
+            }
         }
     } else {
         /* No implicit H - just use stereo_neighbors as-is */
@@ -324,11 +347,14 @@ chirality_t stereo_get_canonical_chirality(const molecule_t* mol, int atom_idx,
 
     /*
      * Build canonical neighbor order based on SMILES output order.
-     * In SMILES output:
-     * 1. From-atom is first (implicit, we came from there in DFS)
-     * 2. For [C@H], H is written next (explicit in bracket)
-     * 3. Other neighbors follow, sorted by canonical rank (lower rank = branches first)
-     * 4. Highest rank neighbor is main chain (written last, no parentheses)
+     * IMPORTANT: In SMILES output, the order is:
+     * 1. From-atom (implicit, we came from there in DFS)
+     * 2. H (if implicit, written explicitly in bracket)
+     * 3. Ring closures (to VISITED atoms) - these come before branches in SMILES syntax
+     * 4. Branches/chain (to UNVISITED atoms), sorted by rank
+     *
+     * This is critical for correct stereo: ring closures appear in SMILES
+     * immediately after the atom symbol, before any branch parentheses.
      */
     int canon_neighbors[4];
     int num_canon = 0;
@@ -343,33 +369,70 @@ chirality_t stereo_get_canonical_chirality(const molecule_t* mol, int atom_idx,
         canon_neighbors[num_canon++] = -1;
     }
 
-    /* Collect other neighbors (excluding from_atom) and sort by canonical rank */
-    int other_neighbors[4];
-    int num_other = 0;
-    for (int i = 0; i < atom->num_neighbors && num_other < 4; i++) {
+    /* Collect neighbors excluding from_atom, split into ring closures and unvisited */
+    int ring_closures[4];
+    int num_ring = 0;
+    int unvisited_neighbors[4];
+    int num_unvisited = 0;
+
+    for (int i = 0; i < atom->num_neighbors; i++) {
         int neighbor = atom->neighbors[i];
-        if (neighbor != from_atom) {
-            other_neighbors[num_other++] = neighbor;
+        if (neighbor == from_atom) continue;
+
+        if (visited && visited[neighbor]) {
+            /* Already visited = ring closure */
+            ring_closures[num_ring++] = neighbor;
+        } else {
+            /* Not visited = will be branch or chain */
+            unvisited_neighbors[num_unvisited++] = neighbor;
         }
     }
 
-    /* Sort other neighbors by canonical rank (ascending) */
-    for (int i = 0; i < num_other - 1; i++) {
-        for (int j = i + 1; j < num_other; j++) {
-            int rank_i = mol->atoms[other_neighbors[i]].canon_rank;
-            int rank_j = mol->atoms[other_neighbors[j]].canon_rank;
-            if (rank_i > rank_j) {
-                int tmp = other_neighbors[i];
-                other_neighbors[i] = other_neighbors[j];
-                other_neighbors[j] = tmp;
+    /* Sort ring closures by rank (they appear in rank order in the output) */
+    for (int i = 0; i < num_ring - 1; i++) {
+        for (int j = i + 1; j < num_ring; j++) {
+            if (mol->atoms[ring_closures[i]].canon_rank > mol->atoms[ring_closures[j]].canon_rank) {
+                int tmp = ring_closures[i];
+                ring_closures[i] = ring_closures[j];
+                ring_closures[j] = tmp;
             }
         }
     }
 
-    /* Add sorted other neighbors to canonical order */
-    for (int i = 0; i < num_other && num_canon < 4; i++) {
-        canon_neighbors[num_canon++] = other_neighbors[i];
+    /* Sort unvisited neighbors by rank */
+    for (int i = 0; i < num_unvisited - 1; i++) {
+        for (int j = i + 1; j < num_unvisited; j++) {
+            if (mol->atoms[unvisited_neighbors[i]].canon_rank > mol->atoms[unvisited_neighbors[j]].canon_rank) {
+                int tmp = unvisited_neighbors[i];
+                unvisited_neighbors[i] = unvisited_neighbors[j];
+                unvisited_neighbors[j] = tmp;
+            }
+        }
     }
+
+    /* Add ring closures first (they appear before branches in SMILES) */
+    for (int i = 0; i < num_ring && num_canon < 4; i++) {
+        canon_neighbors[num_canon++] = ring_closures[i];
+    }
+
+    /* Then add unvisited neighbors (branches and chain) */
+    for (int i = 0; i < num_unvisited && num_canon < 4; i++) {
+        canon_neighbors[num_canon++] = unvisited_neighbors[i];
+    }
+
+#if 0  /* Debug output */
+    fprintf(stderr, "stereo_get_canonical_chirality: atom %d, from_atom=%d, orig_chirality=%d\n",
+            atom_idx, from_atom, atom->chirality);
+    fprintf(stderr, "  had_from_atom=%d, stereo_neighbors[0]=%d, atom->index=%d\n",
+            had_from_atom, atom->num_stereo_neighbors > 0 ? atom->stereo_neighbors[0] : -999, atom->index);
+    fprintf(stderr, "  stereo_neighbors: ");
+    for (int i = 0; i < atom->num_stereo_neighbors; i++) fprintf(stderr, "%d(r%d) ", atom->stereo_neighbors[i], mol->atoms[atom->stereo_neighbors[i]].canon_rank);
+    fprintf(stderr, "\n  orig_neighbors[%d]: ", num_orig);
+    for (int i = 0; i < num_orig; i++) fprintf(stderr, "%d ", orig_neighbors[i]);
+    fprintf(stderr, "\n  canon_neighbors[%d]: ", num_canon);
+    for (int i = 0; i < num_canon; i++) fprintf(stderr, "%d ", canon_neighbors[i]);
+    fprintf(stderr, "\n");
+#endif
 
 #ifdef STEREO_DEBUG
     fprintf(stderr, "stereo_get_canonical_chirality: atom %d, from_atom=%d, orig_chirality=%d\n",

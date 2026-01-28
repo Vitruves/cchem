@@ -378,6 +378,19 @@ add_test(NAME test_sanitize COMMAND test_sanitize)
 #add_executable(verify_logp temp/verify_logp.c)
 #target_link_libraries(verify_logp PRIVATE cchem_lib m)
 
+# Benchmarks (optional)
+option(BUILD_BENCHMARKS "Build performance benchmarks" OFF)
+option(WITH_RDKIT "Build benchmarks with RDKit support" OFF)
+option(WITH_OPENBABEL "Build benchmarks with OpenBabel support" OFF)
+
+if(BUILD_BENCHMARKS)
+    # Enable C++ for the benchmark
+    enable_language(CXX)
+    set(CMAKE_CXX_STANDARD 17)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    add_subdirectory(benchmarks)
+endif()
+
 # Install
 install(TARGETS cchem RUNTIME DESTINATION bin)
 install(DIRECTORY include/cchem DESTINATION include)

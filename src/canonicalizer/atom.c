@@ -371,12 +371,14 @@ void atom_init(atom_t* atom, element_t element) {
     atom->ring_count = 0;
     atom->implicit_h_count = 0;
     atom->total_bond_order = 0;
+    atom->pi_electrons = 0;
     atom->invariant = 0;
     atom->canon_rank = -1;
     atom->visited = false;
     atom->atom_class = 0;
     atom->input_order = -1;
     atom->num_stereo_neighbors = 0;
+    atom->num_ring_opens = 0;
 }
 
 void atom_reset(atom_t* atom) {
@@ -454,6 +456,12 @@ int atom_calc_implicit_h(const atom_t* atom, const struct molecule* mol) {
         return atom->h_count;
     }
 
+    /* Metals and other non-organic-subset elements (except H) don't get implicit H.
+     * This handles cases like [Na+], [K+], [Ca+2] which should have 0 implicit H */
+    if (atom->element != ELEM_H && !element_is_organic_subset(atom->element)) {
+        return 0;
+    }
+
     /* Calculate from valence */
     int valence = element_default_valence(atom->element, atom->charge);
 
@@ -466,9 +474,17 @@ int atom_calc_implicit_h(const atom_t* atom, const struct molecule* mol) {
         }
     }
 
-    /* Aromatic atoms contribute 1 to bond sum for ring bond */
+    /* For aromatic atoms, add contribution based on pi electron count:
+     * - Pyridine-type (1 pi electron): add 1 for partial double bond character
+     * - Pyrrole-type (2 pi electrons): no addition, lone pair is in the ring
+     * - Carbon (1 pi electron): add 1
+     * - O/S (2 pi electrons): no addition
+     */
     if (atom->aromatic) {
-        bond_sum += 1;  /* Aromatic contribution */
+        if (atom->pi_electrons == 1) {
+            bond_sum += 1;  /* Pyridine-type N or aromatic C */
+        }
+        /* For pi_electrons == 2 (pyrrole-type N, O, S), no extra contribution */
     }
 
     int implicit_h = valence - bond_sum;

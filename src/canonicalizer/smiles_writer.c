@@ -8,6 +8,183 @@
 #include <stdio.h>
 #include <ctype.h>
 #include "cchem/canonicalizer/smiles_writer.h"
+#include "cchem/canonicalizer/stereo.h"
+
+/* Forward declarations for ring_info access */
+static bool is_ring_opening_target(const smiles_writer_t* writer, int atom_idx, int neighbor);
+
+/*
+ * Compute canonical chirality using ring_info for correct neighbor ordering.
+ *
+ * The SMILES output order for neighbors of a stereocenter is:
+ * 1. from_atom (implicit, the atom we came from in DFS)
+ * 2. H (if implicit, written in bracket)
+ * 3. Ring openings (to unvisited atoms that are ring_info.atom_to where we're atom_from) - sorted by rank
+ * 4. Ring closings (to visited atoms that are ring_info.atom_from where we're atom_to) - sorted by rank
+ * 5. Branches/chain (to unvisited atoms that are NOT ring opening targets) - sorted by rank
+ */
+static chirality_t compute_canonical_chirality(const smiles_writer_t* writer, int atom_idx, int from_atom) {
+    const molecule_t* mol = writer->mol;
+    const atom_t* atom = molecule_get_atom_const(mol, atom_idx);
+    if (!atom || atom->chirality == CHIRALITY_NONE) return CHIRALITY_NONE;
+
+    /* Build original neighbor order from parsing */
+    int orig_neighbors[4];
+    int num_orig = 0;
+
+    /* Determine if original SMILES had a from-atom */
+    bool had_from_atom = false;
+    if (atom->num_stereo_neighbors > 0) {
+        had_from_atom = (from_atom >= 0) || (atom->stereo_neighbors[0] < atom->index);
+    }
+
+    if (atom->implicit_h_count > 0 && atom->num_stereo_neighbors > 0) {
+        if (had_from_atom) {
+            orig_neighbors[num_orig++] = atom->stereo_neighbors[0];
+            orig_neighbors[num_orig++] = -1;  /* H at position 1 */
+            for (int i = 1; i < atom->num_stereo_neighbors && num_orig < 4; i++) {
+                orig_neighbors[num_orig++] = atom->stereo_neighbors[i];
+            }
+        } else {
+            orig_neighbors[num_orig++] = -1;  /* H first */
+            for (int i = 0; i < atom->num_stereo_neighbors && num_orig < 4; i++) {
+                orig_neighbors[num_orig++] = atom->stereo_neighbors[i];
+            }
+        }
+    } else {
+        for (int i = 0; i < atom->num_stereo_neighbors && num_orig < 4; i++) {
+            orig_neighbors[num_orig++] = atom->stereo_neighbors[i];
+        }
+    }
+
+    /* Build canonical neighbor order using ring_info */
+    int canon_neighbors[4];
+    int num_canon = 0;
+
+    /* 1. From-atom first */
+    if (from_atom >= 0) {
+        canon_neighbors[num_canon++] = from_atom;
+    }
+
+    /* 2. H second (if implicit) */
+    if (atom->implicit_h_count > 0) {
+        canon_neighbors[num_canon++] = -1;
+    }
+
+    /* Collect remaining neighbors into categories */
+    int ring_openings[4];   /* Unvisited atoms where we're atom_from in ring_info */
+    int num_ring_open = 0;
+    int ring_closings[4];   /* Visited atoms */
+    int num_ring_close = 0;
+    int branches[4];        /* Unvisited atoms that are NOT ring opening targets */
+    int num_branches = 0;
+
+    /*
+     * IMPORTANT: Ring openings must be collected in ring_info order, NOT atom->neighbors order.
+     * This is because write_ring_openings writes them in ring_info order, and we need
+     * to match that exact order for stereo calculation.
+     */
+    for (int r = 0; r < writer->num_ring_info; r++) {
+        if (writer->ring_info[r].atom_from == atom_idx) {
+            int neighbor = writer->ring_info[r].atom_to;
+            if (neighbor != from_atom && !writer->visited[neighbor]) {
+                ring_openings[num_ring_open++] = neighbor;
+            }
+        }
+    }
+
+    /* Collect ring closings (visited neighbors) and branches (unvisited non-ring-opening) */
+    for (int i = 0; i < atom->num_neighbors; i++) {
+        int neighbor = atom->neighbors[i];
+        if (neighbor == from_atom) continue;
+
+        if (writer->visited[neighbor]) {
+            /* Visited = ring closing */
+            ring_closings[num_ring_close++] = neighbor;
+        } else {
+            /* Unvisited - check if it's a ring opening target (already collected above) */
+            if (!is_ring_opening_target(writer, atom_idx, neighbor)) {
+                branches[num_branches++] = neighbor;
+            }
+        }
+    }
+
+    /* Sort ring closings and branches by canonical rank.
+     * Ring openings are NOT sorted - they stay in ring_info order to match SMILES output. */
+    for (int i = 0; i < num_ring_close - 1; i++) {
+        for (int j = i + 1; j < num_ring_close; j++) {
+            if (mol->atoms[ring_closings[i]].canon_rank > mol->atoms[ring_closings[j]].canon_rank) {
+                int tmp = ring_closings[i];
+                ring_closings[i] = ring_closings[j];
+                ring_closings[j] = tmp;
+            }
+        }
+    }
+
+    for (int i = 0; i < num_branches - 1; i++) {
+        for (int j = i + 1; j < num_branches; j++) {
+            if (mol->atoms[branches[i]].canon_rank > mol->atoms[branches[j]].canon_rank) {
+                int tmp = branches[i];
+                branches[i] = branches[j];
+                branches[j] = tmp;
+            }
+        }
+    }
+
+    /* 3. Ring openings (to unvisited) come first after H */
+    for (int i = 0; i < num_ring_open && num_canon < 4; i++) {
+        canon_neighbors[num_canon++] = ring_openings[i];
+    }
+
+    /* 4. Ring closings (to visited) come second */
+    for (int i = 0; i < num_ring_close && num_canon < 4; i++) {
+        canon_neighbors[num_canon++] = ring_closings[i];
+    }
+
+    /* 5. Branches/chain (other unvisited) come last */
+    for (int i = 0; i < num_branches && num_canon < 4; i++) {
+        canon_neighbors[num_canon++] = branches[i];
+    }
+
+#if 0  /* Debug output */
+    fprintf(stderr, "compute_canonical_chirality: atom %d, from_atom=%d, orig=%d, implicit_h=%d\n",
+            atom_idx, from_atom, atom->chirality, atom->implicit_h_count);
+    /* Show ring_info order for this atom's ring openings */
+    fprintf(stderr, "  ring_info order for openings: ");
+    for (int r = 0; r < writer->num_ring_info; r++) {
+        if (writer->ring_info[r].atom_from == atom_idx) {
+            fprintf(stderr, "%d(ring%d,rank%d) ",
+                    writer->ring_info[r].atom_to,
+                    writer->ring_info[r].ring_num,
+                    mol->atoms[writer->ring_info[r].atom_to].canon_rank);
+        }
+    }
+    fprintf(stderr, "\n  ring_open_targets (ring_info order): ");
+    for (int i = 0; i < num_ring_open; i++) fprintf(stderr, "%d(r%d) ", ring_openings[i], mol->atoms[ring_openings[i]].canon_rank);
+    fprintf(stderr, "\n  ring_close_targets: ");
+    for (int i = 0; i < num_ring_close; i++) fprintf(stderr, "%d(r%d) ", ring_closings[i], mol->atoms[ring_closings[i]].canon_rank);
+    fprintf(stderr, "\n  branches: ");
+    for (int i = 0; i < num_branches; i++) fprintf(stderr, "%d(r%d) ", branches[i], mol->atoms[branches[i]].canon_rank);
+    fprintf(stderr, "\n  orig[%d]: ", num_orig);
+    for (int i = 0; i < num_orig; i++) fprintf(stderr, "%d ", orig_neighbors[i]);
+    fprintf(stderr, "\n  canon[%d]: ", num_canon);
+    for (int i = 0; i < num_canon; i++) fprintf(stderr, "%d ", canon_neighbors[i]);
+    fprintf(stderr, "\n");
+#endif
+
+    return stereo_permute_chirality(atom->chirality, orig_neighbors, canon_neighbors, num_canon);
+}
+
+/* Check if neighbor is a ring opening target from atom_idx */
+static bool is_ring_opening_target(const smiles_writer_t* writer, int atom_idx, int neighbor) {
+    for (int r = 0; r < writer->num_ring_info; r++) {
+        if (writer->ring_info[r].atom_from == atom_idx &&
+            writer->ring_info[r].atom_to == neighbor) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /* Default output options */
 const smiles_output_options_t SMILES_OUTPUT_DEFAULT = {
@@ -164,6 +341,14 @@ bool smiles_atom_needs_brackets(const molecule_t* mol, int atom_idx,
     /* Needs brackets if has explicit H count specified */
     if (atom->h_count >= 0) return true;
 
+    /* Aromatic heteroatoms with implicit hydrogens need brackets (e.g., [nH] for pyrrole) */
+    if (atom->aromatic && atom->implicit_h_count > 0) {
+        /* Aromatic N, O, S with hydrogens need brackets */
+        if (atom->element == ELEM_N || atom->element == ELEM_O || atom->element == ELEM_S) {
+            return true;
+        }
+    }
+
     /* Needs brackets if has chirality */
     if (atom->chirality != CHIRALITY_NONE && options->show_stereo) return true;
 
@@ -241,8 +426,8 @@ cchem_status_t smiles_write_atom(smiles_writer_t* writer, int atom_idx, int from
         if (atom->chirality != CHIRALITY_NONE && writer->options.show_stereo) {
             chirality_t chiral = atom->chirality;
             if (writer->mol->is_canonical) {
-                chiral = stereo_get_canonical_chirality(writer->mol, atom_idx,
-                                                        from_atom, writer->atom_order);
+                /* Use our function that correctly handles ring opening order */
+                chiral = compute_canonical_chirality(writer, atom_idx, from_atom);
             }
 
             switch (chiral) {

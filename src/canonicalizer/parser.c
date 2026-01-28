@@ -198,8 +198,44 @@ static cchem_status_t parser_process_ring_closure(parser_t* parser, const token_
         if (curr_atom && curr_atom->num_stereo_neighbors < MAX_NEIGHBORS) {
             curr_atom->stereo_neighbors[curr_atom->num_stereo_neighbors++] = other_atom;
         }
-        if (other && other->num_stereo_neighbors < MAX_NEIGHBORS) {
-            other->stereo_neighbors[other->num_stereo_neighbors++] = parser->current_atom;
+
+        /* For the ring opening atom (other), insert at the recorded slot position
+         * if this was a chiral atom with ring openings, otherwise append normally */
+        if (other) {
+            bool inserted = false;
+            for (int i = 0; i < other->num_ring_opens; i++) {
+                if (other->ring_open_nums[i] == ring_num) {
+                    /* Found the slot for this ring - insert at that position */
+                    int slot = other->ring_open_slots[i];
+                    if (slot <= other->num_stereo_neighbors && other->num_stereo_neighbors < MAX_NEIGHBORS) {
+                        /* Shift elements from slot onwards to make room */
+                        for (int j = other->num_stereo_neighbors; j > slot; j--) {
+                            other->stereo_neighbors[j] = other->stereo_neighbors[j-1];
+                        }
+                        other->stereo_neighbors[slot] = parser->current_atom;
+                        other->num_stereo_neighbors++;
+
+                        /* Update slot positions for any subsequent ring openings */
+                        for (int j = i + 1; j < other->num_ring_opens; j++) {
+                            if (other->ring_open_slots[j] >= slot) {
+                                other->ring_open_slots[j]++;
+                            }
+                        }
+                        inserted = true;
+                    }
+                    /* Remove this ring opening from the tracking list */
+                    for (int j = i; j < other->num_ring_opens - 1; j++) {
+                        other->ring_open_slots[j] = other->ring_open_slots[j+1];
+                        other->ring_open_nums[j] = other->ring_open_nums[j+1];
+                    }
+                    other->num_ring_opens--;
+                    break;
+                }
+            }
+            /* If not inserted (no recorded slot), append normally */
+            if (!inserted && other->num_stereo_neighbors < MAX_NEIGHBORS) {
+                other->stereo_neighbors[other->num_stereo_neighbors++] = parser->current_atom;
+            }
         }
 
         parser->ring_open[ring_num] = false;
@@ -210,6 +246,16 @@ static cchem_status_t parser_process_ring_closure(parser_t* parser, const token_
         /* Open new ring */
         parser->ring_open[ring_num] = true;
         parser->ring_closures[ring_num].atom_idx = parser->current_atom;
+
+        /* For chiral atoms, record where this ring opening should be inserted
+         * in stereo_neighbors. The ring number appears in SMILES order here,
+         * but we don't know the closing atom yet. Record the slot position. */
+        if (curr_atom && curr_atom->chirality != CHIRALITY_NONE &&
+            curr_atom->num_ring_opens < 10) {
+            curr_atom->ring_open_slots[curr_atom->num_ring_opens] = curr_atom->num_stereo_neighbors;
+            curr_atom->ring_open_nums[curr_atom->num_ring_opens] = ring_num;
+            curr_atom->num_ring_opens++;
+        }
 
         if (parser->has_pending_bond) {
             parser->ring_closures[ring_num].has_bond = true;
@@ -446,6 +492,8 @@ molecule_t* smiles_to_molecule(const char* smiles, char* error_buf, size_t error
         molecule_find_rings(mol);
         /* Perceive aromaticity (converts Kekule to aromatic) */
         molecule_perceive_aromaticity(mol);
+        /* Recalculate implicit H after aromaticity - pi_electrons affects the calculation */
+        molecule_calc_implicit_h(mol);
     }
 
     return mol;
@@ -495,6 +543,8 @@ cchem_status_t smiles_to_molecule_reuse(molecule_t* mol, const char* smiles,
     if (mol->num_atoms > 0) {
         molecule_find_rings(mol);
         molecule_perceive_aromaticity(mol);
+        /* Recalculate implicit H after aromaticity - pi_electrons affects the calculation */
+        molecule_calc_implicit_h(mol);
     }
 
     return CCHEM_OK;

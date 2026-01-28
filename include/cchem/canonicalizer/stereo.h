@@ -100,9 +100,10 @@ chirality_t stereo_permute_chirality(chirality_t orig, const int* old_order,
                                      const int* new_order, int n);
 
 /* Get canonical chirality symbol for output
- * from_atom is the atom we came from in DFS traversal (-1 if starting atom) */
+ * from_atom is the atom we came from in DFS traversal (-1 if starting atom)
+ * visited is array indicating which atoms have been visited in DFS (for ring closure detection) */
 chirality_t stereo_get_canonical_chirality(const molecule_t* mol, int atom_idx,
-                                           int from_atom, const int* output_order);
+                                           int from_atom, const bool* visited);
 
 /* Check stereochemistry equivalence */
 bool stereo_centers_equivalent(const stereo_center_t* a, const stereo_center_t* b);

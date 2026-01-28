@@ -180,6 +180,11 @@ int molecule_add_bond(molecule_t* mol, int atom1, int atom2, bond_type_t type) {
         /* Update bond type if already exists */
         mol->bonds[existing].type = type;
         mol->bonds[existing].aromatic = (type == BOND_AROMATIC || type == BOND_RING_AROMATIC);
+        /* If bond is aromatic, mark both atoms as aromatic */
+        if (type == BOND_AROMATIC || type == BOND_RING_AROMATIC) {
+            mol->atoms[atom1].aromatic = true;
+            mol->atoms[atom2].aromatic = true;
+        }
         return existing;
     }
 
@@ -192,6 +197,13 @@ int molecule_add_bond(molecule_t* mol, int atom1, int atom2, bond_type_t type) {
     bond_init(&mol->bonds[idx], atom1, atom2, type);
     mol->bonds[idx].index = idx;
     mol->num_bonds++;
+
+    /* If bond is aromatic, mark both atoms as aromatic.
+     * This handles explicit aromatic bond notation like C1:C:C:C:C:C:1 */
+    if (type == BOND_AROMATIC || type == BOND_RING_AROMATIC) {
+        mol->atoms[atom1].aromatic = true;
+        mol->atoms[atom2].aromatic = true;
+    }
 
     /* Update atom connectivity */
     atom_add_neighbor(&mol->atoms[atom1], atom2, idx);
@@ -693,16 +705,37 @@ cchem_status_t molecule_perceive_aromaticity(molecule_t* mol) {
         for (int r = 0; r < mol->num_rings; r++) {
             ring_t* ring = &mol->rings[r];
 
-            /* Skip already aromatic rings */
-            if (ring->aromatic) continue;
+            /* For already aromatic rings (from aromatic SMILES input),
+             * we still need to compute pi_electrons for each atom */
+            if (ring->aromatic) {
+                for (int i = 0; i < ring->size; i++) {
+                    int atom_idx = ring->atoms[i];
+                    if (mol->atoms[atom_idx].pi_electrons == 0) {
+                        mol->atoms[atom_idx].pi_electrons = count_pi_electrons(mol, atom_idx, ring);
+                    }
+                }
+                continue;
+            }
 
             if (ring_is_aromatic(mol, ring)) {
                 ring->aromatic = true;
                 changed = true;
 
-                /* Mark all atoms in ring as aromatic */
+                /* First pass: compute pi electrons BEFORE marking atoms as aromatic
+                 * This is critical because count_pi_electrons uses atom->aromatic to determine
+                 * has_pi_character, which affects whether N is pyridine-type (1) or pyrrole-type (2)
+                 */
                 for (int i = 0; i < ring->size; i++) {
-                    mol->atoms[ring->atoms[i]].aromatic = true;
+                    int atom_idx = ring->atoms[i];
+                    if (mol->atoms[atom_idx].pi_electrons == 0) {
+                        mol->atoms[atom_idx].pi_electrons = count_pi_electrons(mol, atom_idx, ring);
+                    }
+                }
+
+                /* Second pass: mark all atoms in ring as aromatic */
+                for (int i = 0; i < ring->size; i++) {
+                    int atom_idx = ring->atoms[i];
+                    mol->atoms[atom_idx].aromatic = true;
                 }
 
                 /* Mark all bonds in ring as aromatic */
