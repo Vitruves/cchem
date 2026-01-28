@@ -193,18 +193,18 @@ message(STATUS "Native arch optimization: ${ENABLE_NATIVE_ARCH}")
 # Find required libraries
 if(WIN32)
     # On Windows with vcpkg, use pthreads-win32
-    find_package(pthreads CONFIG)
-    if(pthreads_FOUND)
-        set(THREADS_LIBRARIES PThreads4W::pthreads_static)
-        message(STATUS "Found pthreads-win32")
+    find_package(PThreads4W CONFIG)
+    if(PThreads4W_FOUND)
+        set(THREADS_LIBRARIES PThreads4W::PThreads4W)
+        message(STATUS "Found pthreads-win32 (PThreads4W)")
     else()
         # Fallback to Threads package
         find_package(Threads REQUIRED)
-        set(THREADS_LIBRARIES ${THREADS_LIBRARIES})
+        set(THREADS_LIBRARIES Threads::Threads)
     endif()
 else()
     find_package(Threads REQUIRED)
-    set(THREADS_LIBRARIES ${THREADS_LIBRARIES})
+    set(THREADS_LIBRARIES Threads::Threads)
 endif()
 
 # Find Cairo - use different methods per platform

@@ -168,19 +168,24 @@ if _src_dir.exists():
         _sources.append(os.path.relpath(str(_api_file), _pycchem_root))
     # Exclude files that require external dependencies or aren't needed for Python bindings
     _exclude_patterns = [
-        "/depictor/",      # Requires cairo
-        "/commands/",      # CLI commands
+        "depictor",        # Requires cairo
+        "commands",        # CLI commands
         "parquet",         # Requires parquet lib
         "threading",       # Requires pthread
         "progress",        # Requires threading
         "csv",             # Requires threading for batch processing
         "splitter",        # Requires threading
     ]
+    # Normalize paths to forward slashes for consistent matching on all platforms
+    _sources = [s.replace("\\", "/") for s in _sources]
     _sources = [s for s in _sources if not any(p in s for p in _exclude_patterns)]
+if sys.platform == "win32":
+    _extra_compile_args = ["/DCCHEM_BUILDING_EXTENSION"]
+else:
     _extra_compile_args = ["-DCCHEM_BUILDING_EXTENSION"]
 
 if sys.platform == "win32":
-    pass
+    pass  # No extra libraries needed
 elif sys.platform == "darwin":
     _libraries.append("m")
 else:

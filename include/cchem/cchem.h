@@ -31,17 +31,24 @@
 /* Molecular descriptors */
 #include "utils/descriptors.h"
 
-/* Molecular depiction (2D/3D rendering) */
+/* Memory utilities */
+#include "utils/memory.h"
+
+/* Components below require additional dependencies and are excluded from Python bindings */
+#ifndef CCHEM_BUILDING_EXTENSION
+
+/* Molecular depiction (2D/3D rendering) - requires Cairo */
 #include "depictor/depictor.h"
 
-/* Dataset splitting */
+/* Dataset splitting - requires threading */
 #include "splitter/splitter.h"
 
-/* Utilities */
+/* Utilities requiring threading */
 #include "utils/csv.h"
 #include "utils/progress.h"
 #include "utils/threading.h"
-#include "utils/memory.h"
+
+#endif /* CCHEM_BUILDING_EXTENSION */
 
 /* ============================================================================
  * Version Information
