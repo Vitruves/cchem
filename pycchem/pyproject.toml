@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "cffi>=1.15.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycchem"
+version = "1.0.0"
+description = "High-performance cheminformatics library - Python bindings for cchem"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+authors = [
+    {name = "cchem developers"}
+]
+keywords = [
+    "chemistry",
+    "cheminformatics",
+    "smiles",
+    "canonicalization",
+    "molecular-descriptors",
+    "drug-discovery",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "cffi>=1.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-benchmark",
+]
+
+[project.urls]
+Homepage = "https://github.com/Vitruves/cchem"
+Documentation = "https://github.com/Vitruves/cchem#readme"
+Repository = "https://github.com/Vitruves/cchem"
+Issues = "https://github.com/Vitruves/cchem/issues"
+
+[tool.setuptools]
+packages = ["pycchem"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+pycchem = ["*.so", "*.dylib", "*.dll", "*.pyd"]
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
+skip = "*-musllinux_*"
+
+[tool.cibuildwheel.linux]
+before-all = [
+    "yum install -y cairo-devel libjpeg-turbo-devel zlib-devel libzstd-devel || apt-get update && apt-get install -y libcairo2-dev libjpeg-dev zlib1g-dev libzstd-dev",
+    "cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(nproc)",
+]
+repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
+
+[tool.cibuildwheel.macos]
+before-all = [
+    "brew install cairo jpeg zstd pkg-config",
+    "cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(sysctl -n hw.ncpu)",
+]
+
+[tool.cibuildwheel.windows]
+before-all = [
+    "vcpkg install cairo libjpeg-turbo zstd zlib --triplet x64-windows",
+    "cd {project} && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF -DCMAKE_TOOLCHAIN_FILE=%VCPKG_INSTALLATION_ROOT%/scripts/buildsystems/vcpkg.cmake && cmake --build . --config Release",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
