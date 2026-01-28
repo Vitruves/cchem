@@ -62,13 +62,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cairo jpeg zstd
+          brew install cairo jpeg zstd pkg-config
 
       - name: Configure CMake
         run: |
+          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
           cmake -B build \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-            -DENABLE_NATIVE_ARCH=OFF
+            -DENABLE_NATIVE_ARCH=OFF \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
@@ -109,13 +111,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: brew install cairo jpeg zstd
+        run: brew install cairo jpeg zstd pkg-config
 
       - name: Configure CMake
         run: |
+          export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH"
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DENABLE_NATIVE_ARCH=OFF
+            -DENABLE_NATIVE_ARCH=OFF \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)

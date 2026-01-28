@@ -247,6 +247,9 @@ include_directories(${JPEG_INCLUDE_DIR})
 if(WITH_CAIRO AND CAIRO_INCLUDE_DIRS)
     include_directories(${CAIRO_INCLUDE_DIRS})
 endif()
+if(WITH_CAIRO AND CAIRO_LIBRARY_DIRS)
+    link_directories(${CAIRO_LIBRARY_DIRS})
+endif()
 include_directories(${carquet_SOURCE_DIR}/include)
 
 # Library sources
