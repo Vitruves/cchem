@@ -57,6 +57,9 @@ if(MSVC)
     # Microsoft Visual C++
     message(STATUS "Compiler: MSVC ${MSVC_VERSION}")
 
+    # Enable C11 atomics support
+    add_compile_options(/std:c11)
+
     # Base warnings (W4 is high warning level)
     add_compile_options(/W4)
 

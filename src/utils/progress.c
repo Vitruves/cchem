@@ -7,7 +7,28 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+struct timeval {
+    long tv_sec;
+    long tv_usec;
+};
+static int gettimeofday(struct timeval* tv, void* tz) {
+    (void)tz;
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    unsigned long long t = ((unsigned long long)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    t -= 116444736000000000ULL;  /* Convert to Unix epoch */
+    t /= 10;  /* Convert to microseconds */
+    tv->tv_sec = (long)(t / 1000000ULL);
+    tv->tv_usec = (long)(t % 1000000ULL);
+    return 0;
+}
+#else
 #include <sys/time.h>
+#endif
+
 #include "cchem/utils/progress.h"
 
 #define RATE_SAMPLES 10

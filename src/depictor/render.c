@@ -3,6 +3,7 @@
  * @brief Molecular rendering with Cairo
  */
 
+#include "cchem/compat.h"
 #include "cchem/depictor/render.h"
 #include "cchem/depictor/colors.h"
 #include "cchem/canonicalizer/element.h"

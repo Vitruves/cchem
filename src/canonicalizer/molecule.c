@@ -3,6 +3,7 @@
  * @brief Molecular graph data structure implementation
  */
 
+#include "cchem/compat.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

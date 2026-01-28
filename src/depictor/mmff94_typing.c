@@ -6,6 +6,7 @@
  * aromaticity, ring membership, and chemical environment.
  */
 
+#include "cchem/compat.h"
 #include "cchem/depictor/mmff94_types.h"
 #include "cchem/depictor/mmff94_params.h"
 #include "cchem/canonicalizer/ring_finder.h"

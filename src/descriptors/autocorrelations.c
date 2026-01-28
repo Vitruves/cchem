@@ -19,6 +19,7 @@
  * Optimized for speed using BFS-based distance matrix computation.
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>

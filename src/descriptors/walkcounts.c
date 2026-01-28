@@ -12,6 +12,7 @@
  * Total: 36 descriptors
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>

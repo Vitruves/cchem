@@ -22,6 +22,7 @@
  * Total: 7 properties × 6 statistics = 42 descriptors
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>

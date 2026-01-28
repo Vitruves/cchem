@@ -3,6 +3,7 @@
  * @brief Atom invariant calculation for canonicalization (Morgan algorithm)
  */
 
+#include "cchem/compat.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

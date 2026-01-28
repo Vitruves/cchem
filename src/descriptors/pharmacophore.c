@@ -17,6 +17,7 @@
  * - Drug-likeness scores
  */
 
+#include "cchem/compat.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

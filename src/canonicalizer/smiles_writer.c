@@ -3,6 +3,7 @@
  * @brief Generate SMILES string from molecular graph
  */
 
+#include "cchem/compat.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

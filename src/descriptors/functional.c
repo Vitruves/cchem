@@ -18,6 +18,7 @@
  * All functions are O(n) where n is atoms or bonds.
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <stdbool.h>
 #include "cchem/utils/descriptors.h"

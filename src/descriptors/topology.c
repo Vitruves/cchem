@@ -14,6 +14,7 @@
  * All descriptors are O(n) or O(n*m) for fast computation.
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <math.h>
 #include <stdbool.h>

@@ -3,6 +3,7 @@
  * @brief Memory management utilities implementation
  */
 
+#include "cchem/compat.h"
 #include <stdlib.h>
 #include <string.h>
 #include "cchem/utils/memory.h"

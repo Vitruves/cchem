@@ -3,15 +3,51 @@
  * @brief CSV file reading and writing implementation
  */
 
+#include "cchem/compat.h"
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <stdio.h>
 #include <ctype.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
+/* Windows file operations */
+#define open _open
+#define close _close
+#define fstat _fstat
+#define stat _stat
+#define O_RDONLY _O_RDONLY
+/* Windows memory mapping */
+static void* win_mmap(size_t length, int fd) {
+    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+    HANDLE hMapping = CreateFileMapping(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
+    if (!hMapping) return NULL;
+    void* ptr = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, length);
+    CloseHandle(hMapping);
+    return ptr;
+}
+static void win_munmap(void* addr, size_t length) {
+    (void)length;
+    UnmapViewOfFile(addr);
+}
+#define mmap(addr, len, prot, flags, fd, off) win_mmap(len, fd)
+#define munmap(addr, len) win_munmap(addr, len)
+#define MAP_FAILED NULL
+#define PROT_READ 0
+#define MAP_PRIVATE 0
+#else
+#include <strings.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#endif
+
 #include "cchem/utils/csv.h"
 
 #define INITIAL_ROW_CAPACITY 16

@@ -8,7 +8,13 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define usleep(us) Sleep((us) / 1000)
+#else
 #include <unistd.h>
+#endif
 
 #include "cchem/splitter/splitter.h"
 #include "cchem/cchem.h"

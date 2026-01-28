@@ -18,6 +18,7 @@
  * Total: 8 properties × 6 eigenvalues (3 high, 3 low) = 48 descriptors
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>

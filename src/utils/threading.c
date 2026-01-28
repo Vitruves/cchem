@@ -6,7 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define sleep(s) Sleep((s) * 1000)
+#define usleep(us) Sleep((us) / 1000)
+#else
 #include <unistd.h>
+#endif
+
 #include <pthread.h>
 #include "cchem/utils/threading.h"
 #include "cchem/utils/csv.h"

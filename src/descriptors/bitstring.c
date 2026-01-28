@@ -15,6 +15,7 @@
  * Group G: Electronegativity Proxies
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>

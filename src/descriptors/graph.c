@@ -15,6 +15,7 @@
  * - ADME-specific: polar centrality, aromatic connectivity
  */
 
+#include "cchem/compat.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>

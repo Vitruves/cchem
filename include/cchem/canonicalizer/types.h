@@ -6,6 +6,9 @@
 #ifndef CCHEM_CANONICALIZER_TYPES_H
 #define CCHEM_CANONICALIZER_TYPES_H
 
+/* Platform compatibility - must be first */
+#include "cchem/compat.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
