@@ -103,36 +103,25 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --output-on-failure -C ${{ matrix.build_type }}
 
-  build-linux-arm64:
-    runs-on: ubuntu-24.04-arm
-    strategy:
-      fail-fast: false
-      matrix:
-        build_type: [Release]
-
+  build-macos-arm64:
+    runs-on: macos-14  # M1 runner
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libcairo2-dev \
-            libjpeg-dev \
-            zlib1g-dev \
-            libzstd-dev
+        run: brew install cairo jpeg zstd
 
       - name: Configure CMake
         run: |
           cmake -B build \
-            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_BUILD_TYPE=Release \
             -DENABLE_NATIVE_ARCH=OFF
 
       - name: Build
-        run: cmake --build build -j$(nproc)
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
 
       - name: Run tests
-        run: ctest --test-dir build --output-on-failure -j$(nproc)
+        run: ctest --test-dir build --output-on-failure
 
   # Minimal build without optional dependencies
   build-minimal:
