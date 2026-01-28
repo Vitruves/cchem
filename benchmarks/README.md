@@ -30,17 +30,20 @@ Compares SMILES canonicalization speed across:
 
 | Library | 1-thread | vs RDKit | 8-thread | vs RDKit |
 |---------|----------|----------|----------|----------|
-| **cchem** | 28,271/s | **2.50x** | 111,621/s | **5.36x** |
-| RDKit | 11,307/s | 1.00x | 20,834/s | 1.00x |
-| OpenBabel | 9,089/s | 0.80x | 19,224/s | 0.92x |
+| CDK | 32,609/s | **2.90x** | n/a | single-threaded only |
+| **cchem** | 28,311/s | **2.52x** | 112,815/s | **9.87x** |
+| RDKit | 11,229/s | 1.00x | 11,434/s | 1.00x |
+| OpenBabel | 9,092/s | 0.81x | 10,561/s | 0.92x |
+
+*Note: CDK (Java) has excellent single-threaded performance due to JVM JIT optimization. RDKit/OpenBabel multi-threading limited by Python GIL.*
 
 ### Parallel Scaling Efficiency
 
 | Library | 1→8 threads | Efficiency |
 |---------|-------------|------------|
-| **cchem** | 3.95x | 49% |
-| RDKit | 1.84x | 23% |
-| OpenBabel | 2.12x | 26% |
+| **cchem** | 3.98x | 50% |
+| OpenBabel | 1.16x | 15% |
+| RDKit | 1.02x | 13% |
 
 cchem achieves better parallel scaling due to native pthreads vs Python multiprocessing overhead.
 
