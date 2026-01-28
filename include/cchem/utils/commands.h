@@ -9,11 +9,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
-#include <unistd.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdatomic.h>
+#include "cchem/compat.h"
+
+#ifdef _WIN32
+#include <io.h>
+#define isatty _isatty
+#define fileno _fileno
+/* getopt provided by vcpkg or bundled */
+#else
+#include <getopt.h>
+#include <unistd.h>
+#endif
+
 #include <pthread.h>
 
 #include "cchem/cchem.h"

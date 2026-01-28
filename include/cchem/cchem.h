@@ -48,9 +48,9 @@
  * ============================================================================ */
 
 #define CCHEM_VERSION_MAJOR 1
-#define CCHEM_VERSION_MINOR 0
+#define CCHEM_VERSION_MINOR 1
 #define CCHEM_VERSION_PATCH 0
-#define CCHEM_VERSION_STRING "1.0.0"
+#define CCHEM_VERSION_STRING "1.1.0"
 
 /** @brief Get version string */
 const char* cchem_version(void);

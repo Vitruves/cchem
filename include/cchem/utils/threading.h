@@ -13,7 +13,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
-#include <stdatomic.h>
+#include "cchem/compat.h"
 #include <pthread.h>
 #include "cchem/canonicalizer/types.h"
 

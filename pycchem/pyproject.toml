@@ -64,17 +64,19 @@ pycchem = ["*.so", "*.dylib", "*.dll", "*.pyd"]
 
 [tool.cibuildwheel]
 build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
-skip = "*-musllinux_*"
+skip = "*-musllinux_* *-win32 *_i686"
+
+# No before-all needed - C sources are compiled directly into the extension
+# Depictor (cairo) is excluded from Python bindings
 
 [tool.cibuildwheel.linux]
-before-all = "yum install -y cairo-devel libjpeg-turbo-devel zlib-devel libzstd-devel || (apt-get update && apt-get install -y libcairo2-dev libjpeg-dev zlib1g-dev libzstd-dev) && cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(nproc)"
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
 
 [tool.cibuildwheel.macos]
-before-all = "brew install cairo jpeg zstd pkg-config || true && cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(sysctl -n hw.ncpu)"
+# No special setup needed
 
 [tool.cibuildwheel.windows]
-before-all = "vcpkg install cairo libjpeg-turbo zstd zlib pthreads --triplet x64-windows && cd {project} && mkdir build & cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF -DCMAKE_TOOLCHAIN_FILE=%VCPKG_INSTALLATION_ROOT%/scripts/buildsystems/vcpkg.cmake && cmake --build . --config Release"
+# No special setup needed
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,7 +2,24 @@
 cffi build script for pycchem bindings
 """
 
+import os
+from pathlib import Path
 from cffi import FFI
+
+# Find the cchem root directory (parent of pycchem)
+_this_dir = Path(__file__).resolve().parent  # .../pycchem/src/pycchem
+_pycchem_root = _this_dir.parent.parent  # .../pycchem/src/pycchem -> .../pycchem
+_cchem_root = _pycchem_root.parent  # .../pycchem -> .../cchem
+
+# Include and library directories
+_include_dir = _cchem_root / "include"
+_build_dir = _cchem_root / "build"
+
+# Fallback to environment variables if set
+if "CCHEM_INCLUDE_DIR" in os.environ:
+    _include_dir = Path(os.environ["CCHEM_INCLUDE_DIR"])
+if "CCHEM_LIBRARY_DIR" in os.environ:
+    _build_dir = Path(os.environ["CCHEM_LIBRARY_DIR"])
 
 ffi = FFI()
 
@@ -125,15 +142,63 @@ ffi.cdef("""
     void free(void* ptr);
 """)
 
+# Platform-specific library configuration
+import sys
+import glob as globmod
+
+_libraries = []
+_extra_link_args = []
+_extra_compile_args = []
+_sources = []
+
+# Find all C source files from cchem
+_src_dir = _cchem_root / "src"
+if _src_dir.exists():
+    # Compile cchem sources directly into the extension
+    # Use relative paths from pycchem directory (required by setuptools)
+    for pattern in ["canonicalizer/*.c", "descriptors/*.c", "utils/*.c", "splitter/*.c"]:
+        full_pattern = str(_src_dir / pattern)
+        for src_file in globmod.glob(full_pattern):
+            # Convert absolute path to relative path from pycchem root
+            rel_path = os.path.relpath(src_file, _pycchem_root)
+            _sources.append(rel_path)
+    # Add the API file
+    _api_file = _src_dir / "cchem_api.c"
+    if _api_file.exists():
+        _sources.append(os.path.relpath(str(_api_file), _pycchem_root))
+    # Exclude files that require external dependencies or aren't needed for Python bindings
+    _exclude_patterns = [
+        "/depictor/",      # Requires cairo
+        "/commands/",      # CLI commands
+        "parquet",         # Requires parquet lib
+        "threading",       # Requires pthread
+        "progress",        # Requires threading
+        "csv",             # Requires threading for batch processing
+        "splitter",        # Requires threading
+    ]
+    _sources = [s for s in _sources if not any(p in s for p in _exclude_patterns)]
+    _extra_compile_args = ["-DCCHEM_BUILDING_EXTENSION"]
+
+if sys.platform == "win32":
+    pass
+elif sys.platform == "darwin":
+    _libraries.append("m")
+else:
+    _libraries.append("m")
+    _libraries.append("pthread")
+
 ffi.set_source(
     "pycchem._cchem_ffi",
     """
     #include "cchem/cchem.h"
     #include <stdlib.h>
     """,
-    libraries=["cchem_lib", "m"],
-    include_dirs=["include"],
-    library_dirs=["build"],
+    sources=_sources,
+    libraries=_libraries,
+    include_dirs=[str(_include_dir)],
+    library_dirs=[str(_build_dir)],
+    extra_compile_args=_extra_compile_args,
+    extra_link_args=_extra_link_args,
 )
 
 if __name__ == "__main__":

@@ -191,7 +191,21 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Native arch optimization: ${ENABLE_NATIVE_ARCH}")
 
 # Find required libraries
-find_package(Threads REQUIRED)
+if(WIN32)
+    # On Windows with vcpkg, use pthreads-win32
+    find_package(pthreads CONFIG)
+    if(pthreads_FOUND)
+        set(THREADS_LIBRARIES PThreads4W::pthreads_static)
+        message(STATUS "Found pthreads-win32")
+    else()
+        # Fallback to Threads package
+        find_package(Threads REQUIRED)
+        set(THREADS_LIBRARIES ${THREADS_LIBRARIES})
+    endif()
+else()
+    find_package(Threads REQUIRED)
+    set(THREADS_LIBRARIES ${THREADS_LIBRARIES})
+endif()
 
 # Find Cairo - use different methods per platform
 option(WITH_CAIRO "Build with Cairo support for 2D rendering" ON)
@@ -341,22 +355,34 @@ set(CCHEM_SOURCES
 
 # Create static library
 add_library(cchem_lib STATIC ${CCHEM_SOURCES})
-target_link_libraries(cchem_lib PRIVATE Threads::Threads)
+target_link_libraries(cchem_lib PRIVATE ${THREADS_LIBRARIES})
+
+# Create shared library for Python bindings
+add_library(cchem_shared SHARED ${CCHEM_SOURCES})
+set_target_properties(cchem_shared PROPERTIES OUTPUT_NAME "cchem_lib")
+target_link_libraries(cchem_shared PRIVATE ${THREADS_LIBRARIES})
+
 if(HAVE_JPEG)
     target_link_libraries(cchem_lib PRIVATE ${JPEG_LIBRARIES})
+    target_link_libraries(cchem_shared PRIVATE ${JPEG_LIBRARIES})
 endif()
 if(WITH_CAIRO)
     target_link_libraries(cchem_lib PRIVATE ${CAIRO_LIBRARIES})
+    target_link_libraries(cchem_shared PRIVATE ${CAIRO_LIBRARIES})
 endif()
 if(NOT WIN32)
     target_link_libraries(cchem_lib PRIVATE m)
+    target_link_libraries(cchem_shared PRIVATE m)
 endif()
 if(CAIRO_LIBRARY_DIRS)
     target_link_directories(cchem_lib PRIVATE ${CAIRO_LIBRARY_DIRS})
+    target_link_directories(cchem_shared PRIVATE ${CAIRO_LIBRARY_DIRS})
 endif()
 if(HAVE_CARQUET)
     target_link_libraries(cchem_lib PRIVATE carquet)
+    target_link_libraries(cchem_shared PRIVATE carquet)
     target_compile_definitions(cchem_lib PRIVATE HAVE_PARQUET=1)
+    target_compile_definitions(cchem_shared PRIVATE HAVE_PARQUET=1)
 endif()
 
 # Main executable
@@ -368,7 +394,7 @@ add_executable(cchem
     $<$<BOOL:${WITH_CAIRO}>:src/commands/cmd_depict.c>
     src/commands/cmd_split.c
 )
-target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads)
+target_link_libraries(cchem PRIVATE cchem_lib ${THREADS_LIBRARIES})
 if(HAVE_JPEG)
     target_link_libraries(cchem PRIVATE ${JPEG_LIBRARIES})
 endif()
@@ -376,6 +402,7 @@ if(WITH_CAIRO)
     target_link_libraries(cchem PRIVATE ${CAIRO_LIBRARIES})
     target_compile_definitions(cchem PRIVATE HAVE_CAIRO=1)
     target_compile_definitions(cchem_lib PRIVATE HAVE_CAIRO=1)
+    target_compile_definitions(cchem_shared PRIVATE HAVE_CAIRO=1)
 endif()
 if(NOT WIN32)
     target_link_libraries(cchem PRIVATE m)
