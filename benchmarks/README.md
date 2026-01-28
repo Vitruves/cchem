@@ -16,25 +16,33 @@ Compares SMILES canonicalization speed across:
 
 ## Results Summary (27k molecules)
 
+**Test System:** MacBook Air M3 (2024), 8-core CPU @ 4.06 GHz, 16 GB RAM, macOS Tahoe 26.2
+
 ### C/C++ Native Performance
 
-| Library | 1-thread | 8-thread | Scaling |
-|---------|----------|----------|---------|
-| **cchem** | 33,210/s | 139,265/s | 4.19x |
-| RDKit | 10,617/s | 48,740/s | 4.59x |
-| OpenBabel | 9,611/s | n/a | not thread-safe |
-
-**cchem is 3.1x faster single-threaded and 2.9x faster multi-threaded vs RDKit**
+| Library | 1-thread | vs RDKit | 8-thread | vs RDKit |
+|---------|----------|----------|----------|----------|
+| **cchem** | 30,052/s | **2.82x** | 132,335/s | **2.66x** |
+| RDKit | 10,654/s | 1.00x | 49,778/s | 1.00x |
+| OpenBabel | 9,733/s | 0.91x | n/a | not thread-safe |
 
 ### Python Bindings Performance
 
-| Library | 1-thread | 8-thread | Scaling |
-|---------|----------|----------|---------|
-| **cchem** | 32,006/s | 124,833/s | 3.90x |
-| RDKit | 11,320/s | 21,721/s | 1.92x |
-| OpenBabel | 9,137/s | 20,008/s | 2.19x |
+| Library | 1-thread | vs RDKit | 8-thread | vs RDKit |
+|---------|----------|----------|----------|----------|
+| **cchem** | 28,271/s | **2.50x** | 111,621/s | **5.36x** |
+| RDKit | 11,307/s | 1.00x | 20,834/s | 1.00x |
+| OpenBabel | 9,089/s | 0.80x | 19,224/s | 0.92x |
 
-Python multiprocessing has higher overhead than native threading.
+### Parallel Scaling Efficiency
+
+| Library | 1→8 threads | Efficiency |
+|---------|-------------|------------|
+| **cchem** | 3.95x | 49% |
+| RDKit | 1.84x | 23% |
+| OpenBabel | 2.12x | 26% |
+
+cchem achieves better parallel scaling due to native pthreads vs Python multiprocessing overhead.
 
 ## C++ Benchmark
 
