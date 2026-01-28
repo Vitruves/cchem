@@ -165,7 +165,12 @@ typedef struct {
 static int rank_pair_compare(const void* a, const void* b) {
     const rank_pair_t* pa = (const rank_pair_t*)a;
     const rank_pair_t* pb = (const rank_pair_t*)b;
-    return pa->rank - pb->rank;
+    /* Primary sort by canonical rank */
+    if (pa->rank != pb->rank) {
+        return pa->rank - pb->rank;
+    }
+    /* Secondary sort by atom index for deterministic ordering when ranks are equal */
+    return pa->index - pb->index;
 }
 
 cchem_status_t canon_generate_order(canon_context_t* ctx) {

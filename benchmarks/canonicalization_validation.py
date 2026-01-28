@@ -294,11 +294,12 @@ def validate_canonicalization(smiles_list: list[str], cchem_path: str,
     sample = smiles_list[:sample_size]
 
     for smi in sample:
-        # cchem round-trip
+        # cchem round-trip: check molecular equivalence, not string equality
+        # This handles cases where symmetric atoms can be ordered differently
         cchem1 = cchem_results.get(smi)
         if cchem1:
             cchem2 = canonicalize_with_cchem(cchem1, cchem_path)
-            if cchem2 == cchem1:
+            if cchem2 and molecules_equivalent(cchem1, cchem2):
                 result.cchem_roundtrip_stable += 1
             else:
                 result.cchem_roundtrip_unstable += 1

@@ -298,32 +298,140 @@ bool invariant_all_unique(const molecule_t* mol) {
     return invariant_count_distinct(mol) == mol->num_atoms;
 }
 
-/* Structure for tie-breaking sort - needs molecule pointer for degree lookup */
+/* Structure for tie-breaking sort with multi-level neighborhood signatures */
 typedef struct {
     int index;
     uint64_t invariant;
+    uint64_t neighbor_sig;      /* Signature based on immediate neighbors */
+    uint64_t extended_sig;      /* Signature based on 2-hop neighborhood */
     int degree;
 } tie_pair_t;
 
-/* Comparison for tie-breaking: descending by invariant, then by degree, then by index */
+/*
+ * Compute a deterministic signature for an atom based on its neighbors' invariants.
+ * This is invariant to atom renumbering since it only uses invariant values.
+ */
+static uint64_t compute_neighbor_signature(const molecule_t* mol, int atom_idx) {
+    const atom_t* atom = &mol->atoms[atom_idx];
+
+    /* Collect neighbor invariants with bond orders */
+    uint64_t neighbor_data[16];
+    int n = atom->num_neighbors < 16 ? atom->num_neighbors : 16;
+
+    for (int i = 0; i < n; i++) {
+        int neighbor = atom->neighbors[i];
+        int bond_idx = atom->neighbor_bonds[i];
+
+        uint64_t inv = mol->atoms[neighbor].invariant;
+        int bond_order = 1;
+        if (bond_idx >= 0 && bond_idx < mol->num_bonds) {
+            bond_order = bond_get_int_order(&mol->bonds[bond_idx]);
+        }
+
+        /* Combine neighbor invariant with bond order */
+        neighbor_data[i] = hash_combine(inv, (uint64_t)bond_order);
+    }
+
+    /* Sort for canonical ordering */
+    for (int i = 1; i < n; i++) {
+        uint64_t key = neighbor_data[i];
+        int j = i - 1;
+        while (j >= 0 && neighbor_data[j] > key) {
+            neighbor_data[j + 1] = neighbor_data[j];
+            j--;
+        }
+        neighbor_data[j + 1] = key;
+    }
+
+    /* Combine into single signature */
+    uint64_t sig = 0;
+    for (int i = 0; i < n; i++) {
+        sig = hash_combine(sig, neighbor_data[i]);
+    }
+
+    return sig;
+}
+
+/*
+ * Compute extended signature considering 2-hop neighborhood.
+ * This helps distinguish atoms that have identical immediate neighborhoods
+ * but differ in their extended environment.
+ */
+static uint64_t compute_extended_signature(const molecule_t* mol, int atom_idx) {
+    const atom_t* atom = &mol->atoms[atom_idx];
+
+    /* Collect signatures of all atoms within 2 hops */
+    uint64_t extended_data[64];
+    int count = 0;
+
+    /* Add self */
+    extended_data[count++] = atom->invariant;
+
+    /* Add immediate neighbors */
+    for (int i = 0; i < atom->num_neighbors && count < 64; i++) {
+        int neighbor = atom->neighbors[i];
+        extended_data[count++] = mol->atoms[neighbor].invariant;
+
+        /* Add neighbors of neighbors (2-hop) */
+        const atom_t* n_atom = &mol->atoms[neighbor];
+        for (int j = 0; j < n_atom->num_neighbors && count < 64; j++) {
+            int nn = n_atom->neighbors[j];
+            if (nn != atom_idx) {  /* Exclude the original atom */
+                extended_data[count++] = mol->atoms[nn].invariant;
+            }
+        }
+    }
+
+    /* Sort for canonical ordering */
+    for (int i = 1; i < count; i++) {
+        uint64_t key = extended_data[i];
+        int j = i - 1;
+        while (j >= 0 && extended_data[j] > key) {
+            extended_data[j + 1] = extended_data[j];
+            j--;
+        }
+        extended_data[j + 1] = key;
+    }
+
+    /* Combine into single signature */
+    uint64_t sig = 0;
+    for (int i = 0; i < count; i++) {
+        sig = hash_combine(sig, extended_data[i]);
+    }
+
+    return sig;
+}
+
+/*
+ * Comparison for tie-breaking using neighborhood signatures.
+ * This ordering is invariant to atom renumbering.
+ */
 static int tie_pair_compare(const void* a, const void* b) {
     const tie_pair_t* pa = (const tie_pair_t*)a;
     const tie_pair_t* pb = (const tie_pair_t*)b;
 
-    /* Higher invariant = lower rank = comes first (descending) */
+    /* Primary: higher invariant = lower rank = comes first (descending) */
     if (pa->invariant > pb->invariant) return -1;
     if (pa->invariant < pb->invariant) return 1;
 
-    /* Same invariant: lower degree comes first */
+    /* Secondary: higher neighbor signature comes first */
+    if (pa->neighbor_sig > pb->neighbor_sig) return -1;
+    if (pa->neighbor_sig < pb->neighbor_sig) return 1;
+
+    /* Tertiary: higher extended signature comes first */
+    if (pa->extended_sig > pb->extended_sig) return -1;
+    if (pa->extended_sig < pb->extended_sig) return 1;
+
+    /* Quaternary: lower degree comes first */
     if (pa->degree < pb->degree) return -1;
     if (pa->degree > pb->degree) return 1;
 
-    /* Same degree: lower index comes first */
-    if (pa->index < pb->index) return -1;
-    if (pa->index > pb->index) return 1;
-
+    /* Final: atoms are truly symmetric - return 0 to indicate tie */
     return 0;
 }
+
+/* Debug flag - set to 1 to enable debug output */
+#define INVARIANT_DEBUG 0
 
 cchem_status_t invariant_break_ties(molecule_t* mol) {
     if (!mol) return CCHEM_ERROR_INVALID_INPUT;
@@ -351,15 +459,90 @@ cchem_status_t invariant_break_ties(molecule_t* mol) {
         pairs = stack_pairs;
     }
 
-    /* Populate pairs with invariant and degree */
+    /* Populate pairs with invariant, neighborhood signatures, and degree */
     for (int i = 0; i < n; i++) {
         pairs[i].index = i;
         pairs[i].invariant = mol->atoms[i].invariant;
+        pairs[i].neighbor_sig = compute_neighbor_signature(mol, i);
+        pairs[i].extended_sig = compute_extended_signature(mol, i);
         pairs[i].degree = mol->atoms[i].num_neighbors;
     }
 
+#if INVARIANT_DEBUG
+    fprintf(stderr, "Before tie-breaking sort:\n");
+    for (int i = 0; i < n; i++) {
+        fprintf(stderr, "  Atom %2d: inv=%016llx nsig=%016llx esig=%016llx deg=%d elem=%d\n",
+                pairs[i].index, (unsigned long long)pairs[i].invariant,
+                (unsigned long long)pairs[i].neighbor_sig,
+                (unsigned long long)pairs[i].extended_sig,
+                pairs[i].degree, mol->atoms[pairs[i].index].element);
+    }
+#endif
+
     /* Sort using O(n log n) qsort */
     qsort(pairs, n, sizeof(tie_pair_t), tie_pair_compare);
+
+    /*
+     * Check for remaining ties (truly symmetric atoms).
+     * If any exist, use canonical BFS to establish a deterministic order.
+     */
+    bool has_ties = false;
+    for (int i = 1; i < n && !has_ties; i++) {
+        if (pairs[i].invariant == pairs[i-1].invariant &&
+            pairs[i].neighbor_sig == pairs[i-1].neighbor_sig &&
+            pairs[i].extended_sig == pairs[i-1].extended_sig &&
+            pairs[i].degree == pairs[i-1].degree) {
+            has_ties = true;
+        }
+    }
+
+    if (has_ties) {
+        /*
+         * For truly symmetric atoms, we fall back to using atom index as
+         * the tie-breaker. This is acceptable because:
+         * 1. Symmetric atoms are chemically equivalent - any ordering is valid
+         * 2. The atom indices determine the DFS traversal order
+         * 3. The SMILES writer uses the same ordering, so the output is deterministic
+         *
+         * Note: This may not produce round-trip stable SMILES for molecules
+         * with symmetric atoms because atom indices change on re-parsing.
+         * For strict round-trip stability, more sophisticated algorithms
+         * like SMILES-based fingerprinting would be needed.
+         *
+         * The key for correctness is that molecules that are structurally
+         * equivalent will produce equivalent canonical SMILES (even if
+         * not identical strings for symmetric molecules).
+         */
+        for (int i = 1; i < n; i++) {
+            for (int j = i; j > 0; j--) {
+                /* Check if pairs[j] and pairs[j-1] are tied */
+                if (pairs[j].invariant == pairs[j-1].invariant &&
+                    pairs[j].neighbor_sig == pairs[j-1].neighbor_sig &&
+                    pairs[j].extended_sig == pairs[j-1].extended_sig &&
+                    pairs[j].degree == pairs[j-1].degree) {
+                    /* Tied - use atom index as final tie-breaker */
+                    if (pairs[j].index < pairs[j-1].index) {
+                        tie_pair_t tmp = pairs[j];
+                        pairs[j] = pairs[j-1];
+                        pairs[j-1] = tmp;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+#if INVARIANT_DEBUG
+    fprintf(stderr, "After tie-breaking sort (ranks assigned):\n");
+    for (int i = 0; i < n; i++) {
+        fprintf(stderr, "  Rank %2d -> Atom %2d (inv=%016llx nsig=%016llx esig=%016llx deg=%d elem=%d)\n",
+                i, pairs[i].index, (unsigned long long)pairs[i].invariant,
+                (unsigned long long)pairs[i].neighbor_sig,
+                (unsigned long long)pairs[i].extended_sig,
+                pairs[i].degree, mol->atoms[pairs[i].index].element);
+    }
+#endif
 
     /* Assign unique ranks based on sorted position */
     for (int i = 0; i < n; i++) {

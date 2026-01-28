@@ -521,6 +521,15 @@ static void write_ring_openings(smiles_writer_t* writer, int atom_idx) {
     }
 }
 
+/* Find atom's position in canonical order array (for deterministic tie-breaking) */
+static int get_canon_position(const molecule_t* mol, int atom_idx) {
+    if (!mol->canon_order) return atom_idx;
+    for (int i = 0; i < mol->num_atoms; i++) {
+        if (mol->canon_order[i] == atom_idx) return i;
+    }
+    return atom_idx;  /* Fallback */
+}
+
 /* Check if we need to write ring closing at this atom */
 static void write_ring_closings(smiles_writer_t* writer, int atom_idx) {
     for (int i = 0; i < writer->num_ring_info; i++) {
@@ -569,6 +578,7 @@ static void identify_rings_dfs(smiles_writer_t* writer, int atom_idx, int from_a
         int neighbor_idx;
         int bond_idx;
         int canon_rank;
+        int canon_pos;
     } nb_info_t;
 
     nb_info_t neighbors[16];
@@ -581,13 +591,21 @@ static void identify_rings_dfs(smiles_writer_t* writer, int atom_idx, int from_a
         neighbors[num_neighbors].neighbor_idx = neighbor;
         neighbors[num_neighbors].bond_idx = atom->neighbor_bonds[i];
         neighbors[num_neighbors].canon_rank = writer->mol->atoms[neighbor].canon_rank;
+        neighbors[num_neighbors].canon_pos = get_canon_position(writer->mol, neighbor);
         num_neighbors++;
     }
 
-    /* Sort by canonical rank */
+    /* Sort by canonical rank, with canon_pos as tie-breaker */
     for (int i = 0; i < num_neighbors - 1; i++) {
         for (int j = i + 1; j < num_neighbors; j++) {
+            bool swap = false;
             if (neighbors[i].canon_rank > neighbors[j].canon_rank) {
+                swap = true;
+            } else if (neighbors[i].canon_rank == neighbors[j].canon_rank &&
+                       neighbors[i].canon_pos > neighbors[j].canon_pos) {
+                swap = true;
+            }
+            if (swap) {
                 nb_info_t tmp = neighbors[i];
                 neighbors[i] = neighbors[j];
                 neighbors[j] = tmp;
@@ -633,12 +651,18 @@ typedef struct {
     int neighbor_idx;
     int bond_idx;
     int canon_rank;
+    int canon_pos;  /* Position in canonical order (for tie-breaking) */
 } neighbor_info_t;
 
 static int neighbor_compare(const void* a, const void* b) {
     const neighbor_info_t* na = (const neighbor_info_t*)a;
     const neighbor_info_t* nb = (const neighbor_info_t*)b;
-    return na->canon_rank - nb->canon_rank;
+    /* Primary sort by canonical rank */
+    if (na->canon_rank != nb->canon_rank) {
+        return na->canon_rank - nb->canon_rank;
+    }
+    /* Secondary sort by position in canonical order (for deterministic tie-breaking) */
+    return na->canon_pos - nb->canon_pos;
 }
 
 /* DFS traversal to generate SMILES */
@@ -693,10 +717,11 @@ static void write_dfs(smiles_writer_t* writer, int atom_idx, int from_atom, bond
         neighbors[num_unvisited].neighbor_idx = neighbor;
         neighbors[num_unvisited].bond_idx = atom->neighbor_bonds[i];
         neighbors[num_unvisited].canon_rank = writer->mol->atoms[neighbor].canon_rank;
+        neighbors[num_unvisited].canon_pos = get_canon_position(writer->mol, neighbor);
         num_unvisited++;
     }
 
-    /* Sort neighbors by canonical rank */
+    /* Sort neighbors by canonical rank (with canon_pos as tie-breaker) */
     if (num_unvisited > 1) {
         qsort(neighbors, num_unvisited, sizeof(neighbor_info_t), neighbor_compare);
     }
