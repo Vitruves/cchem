@@ -87,24 +87,46 @@ High-performance cheminformatics library written in pure C.
 
 ### Dependencies
 
-| Library | Purpose |
-|---------|---------|
-| cairo | 2D vector graphics rendering |
-| libjpeg | JPEG image output |
-| pthreads | Parallel processing |
-| libm | Mathematics functions |
-| carquet | Apache Parquet file support (fetched automatically via CMake) |
+| Library | Purpose | Required |
+|---------|---------|----------|
+| pthreads | Parallel processing | Yes |
+| libm | Mathematics functions | Yes |
+| zlib | Compression (for Parquet) | Yes |
+| zstd | Compression (for Parquet) | Yes |
+| cairo | 2D vector graphics rendering | Optional |
+| libjpeg | JPEG image output | Optional |
+| carquet | Apache Parquet file support | Auto-fetched |
+
+Cairo and libjpeg are only required for the `depict` command. Build with `-DWITH_CAIRO=OFF` to skip these dependencies.
 
 ### macOS (Homebrew)
 
 ```bash
-brew install cairo jpeg
+# Full installation (with depict command)
+brew install cairo jpeg zstd
+
+# Minimal installation (without depict)
+brew install zstd
 ```
 
 ### Linux (apt)
 
 ```bash
-sudo apt-get install libcairo2-dev libjpeg-dev
+# Full installation (with depict command)
+sudo apt-get install libcairo2-dev libjpeg-dev zlib1g-dev libzstd-dev
+
+# Minimal installation (without depict)
+sudo apt-get install zlib1g-dev libzstd-dev
+```
+
+### Windows (vcpkg)
+
+```bash
+# Full installation
+vcpkg install cairo libjpeg-turbo zstd zlib --triplet x64-windows
+
+# Minimal installation
+vcpkg install zstd zlib --triplet x64-windows
 ```
 
 ### Build
@@ -323,8 +345,9 @@ cchem help       # Show help message
 ### Requirements
 
 - CMake 3.16+
-- C11 compatible compiler (GCC, Clang)
-- Dependencies: cairo, libjpeg
+- C11 compatible compiler (GCC, Clang, MSVC)
+- Required: zlib, zstd
+- Optional: cairo, libjpeg (for `depict` command)
 
 ### Build Commands
 
@@ -336,16 +359,48 @@ make -j$(nproc)
 
 ### Build Options
 
+| Option | Default | Description |
+|--------|---------|-------------|
+| `CMAKE_BUILD_TYPE` | `Release` | Build type: `Release`, `Debug`, `RelWithDebInfo` |
+| `ENABLE_SANITIZERS` | `OFF` | Enable AddressSanitizer and UBSan (Debug only) |
+| `ENABLE_NATIVE_ARCH` | `ON` | Optimize for native CPU (`-march=native`) |
+| `WITH_CAIRO` | `ON` | Enable Cairo for 2D rendering and `depict` command |
+| `BUILD_BENCHMARKS` | `OFF` | Build performance benchmarks |
+| `WITH_RDKIT` | `OFF` | Include RDKit in benchmarks |
+| `WITH_OPENBABEL` | `OFF` | Include OpenBabel in benchmarks |
+
 ```bash
+# Standard release build (default)
+cmake -DCMAKE_BUILD_TYPE=Release ..
+
 # Debug build with sanitizers
 cmake -DCMAKE_BUILD_TYPE=Debug -DENABLE_SANITIZERS=ON ..
 
-# Release build with LTO (default)
-cmake -DCMAKE_BUILD_TYPE=Release ..
-
-# Disable native architecture optimization
+# Portable build (disable native CPU optimization)
 cmake -DENABLE_NATIVE_ARCH=OFF ..
+
+# Minimal build without Cairo/JPEG (no depict command)
+cmake -DWITH_CAIRO=OFF ..
+
+# Build with benchmarks
+cmake -DBUILD_BENCHMARKS=ON -DWITH_RDKIT=ON ..
 ```
+
+### Minimal Build
+
+For systems without Cairo or when 2D rendering is not needed:
+
+```bash
+cmake -DWITH_CAIRO=OFF ..
+make -j$(nproc)
+```
+
+This disables:
+- 2D/3D molecular visualization (`depict` command)
+- MMFF94 force field
+- JPEG dependency
+
+Core functionality (canonicalization, descriptors, splitting) remains fully available.
 
 ### Running Tests
 

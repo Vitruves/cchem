@@ -189,7 +189,6 @@ message(STATUS "Native arch optimization: ${ENABLE_NATIVE_ARCH}")
 
 # Find required libraries
 find_package(Threads REQUIRED)
-find_package(JPEG REQUIRED)
 
 # Find Cairo - use different methods per platform
 option(WITH_CAIRO "Build with Cairo support for 2D rendering" ON)
@@ -222,6 +221,14 @@ if(WITH_CAIRO)
     endif()
 endif()
 
+# Find JPEG - only needed when Cairo is enabled (for image output)
+if(WITH_CAIRO)
+    find_package(JPEG REQUIRED)
+    set(HAVE_JPEG TRUE)
+else()
+    set(HAVE_JPEG FALSE)
+endif()
+
 # Fetch and build carquet library for Parquet support
 include(FetchContent)
 FetchContent_Declare(
@@ -243,7 +250,9 @@ message(STATUS "carquet available for Parquet support")
 
 # Include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
-include_directories(${JPEG_INCLUDE_DIR})
+if(HAVE_JPEG)
+    include_directories(${JPEG_INCLUDE_DIR})
+endif()
 if(WITH_CAIRO AND CAIRO_INCLUDE_DIRS)
     include_directories(${CAIRO_INCLUDE_DIRS})
 endif()
@@ -308,27 +317,34 @@ set(CCHEM_SOURCES
     src/descriptors/atompairs_ext.c
     src/descriptors/framework.c
     src/descriptors/constitutional.c
-    src/depictor/types.c
-    src/depictor/colors.c
-    src/depictor/coords2d.c
-    src/depictor/layout_utils.c
-    src/depictor/ring_systems.c
-    src/depictor/ring_templates.c
-    src/depictor/ring_placement.c
-    src/depictor/chain_placement.c
-    src/depictor/collision.c
-    src/depictor/force_directed.c
-    src/depictor/coords3d.c
-    src/depictor/render.c
-    src/depictor/depictor.c
-    src/depictor/mmff94_typing.c
-    src/depictor/mmff94_charges.c
-    src/depictor/mmff94_energy.c
+    # Depictor sources - only include when Cairo is available
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/types.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/colors.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/coords2d.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/layout_utils.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/ring_systems.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/ring_templates.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/ring_placement.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/chain_placement.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/collision.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/force_directed.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/coords3d.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/render.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/depictor.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/mmff94_typing.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/mmff94_charges.c>
+    $<$<BOOL:${WITH_CAIRO}>:src/depictor/mmff94_energy.c>
 )
 
 # Create static library
 add_library(cchem_lib STATIC ${CCHEM_SOURCES})
-target_link_libraries(cchem_lib PRIVATE Threads::Threads ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
+target_link_libraries(cchem_lib PRIVATE Threads::Threads)
+if(HAVE_JPEG)
+    target_link_libraries(cchem_lib PRIVATE ${JPEG_LIBRARIES})
+endif()
+if(WITH_CAIRO)
+    target_link_libraries(cchem_lib PRIVATE ${CAIRO_LIBRARIES})
+endif()
 if(NOT WIN32)
     target_link_libraries(cchem_lib PRIVATE m)
 endif()
@@ -346,10 +362,18 @@ add_executable(cchem
     src/commands/cmd_canonicalize.c
     src/commands/cmd_validate.c
     src/commands/cmd_compute.c
-    src/commands/cmd_depict.c
+    $<$<BOOL:${WITH_CAIRO}>:src/commands/cmd_depict.c>
     src/commands/cmd_split.c
 )
-target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads ${JPEG_LIBRARIES} ${CAIRO_LIBRARIES})
+target_link_libraries(cchem PRIVATE cchem_lib Threads::Threads)
+if(HAVE_JPEG)
+    target_link_libraries(cchem PRIVATE ${JPEG_LIBRARIES})
+endif()
+if(WITH_CAIRO)
+    target_link_libraries(cchem PRIVATE ${CAIRO_LIBRARIES})
+    target_compile_definitions(cchem PRIVATE HAVE_CAIRO=1)
+    target_compile_definitions(cchem_lib PRIVATE HAVE_CAIRO=1)
+endif()
 if(NOT WIN32)
     target_link_libraries(cchem PRIVATE m)
 endif()
@@ -396,9 +420,11 @@ add_executable(test_descriptors_extended tests/test_descriptors_extended.c)
 target_link_libraries(test_descriptors_extended PRIVATE cchem_lib m)
 add_test(NAME test_descriptors_extended COMMAND test_descriptors_extended)
 
-add_executable(test_mmff94 tests/test_mmff94.c)
-target_link_libraries(test_mmff94 PRIVATE cchem_lib m)
-add_test(NAME test_mmff94 COMMAND test_mmff94)
+if(WITH_CAIRO)
+    add_executable(test_mmff94 tests/test_mmff94.c)
+    target_link_libraries(test_mmff94 PRIVATE cchem_lib m)
+    add_test(NAME test_mmff94 COMMAND test_mmff94)
+endif()
 
 add_executable(test_sanitize tests/test_sanitize.c)
 target_link_libraries(test_sanitize PRIVATE cchem_lib m)

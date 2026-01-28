@@ -19,7 +19,9 @@ static void print_usage(const char* prog_name) {
     printf("Commands:\n");
     printf("  canonicalize   Canonicalize SMILES strings\n");
     printf("  compute        Compute molecular descriptors\n");
+#ifdef HAVE_CAIRO
     printf("  depict         Generate 2D/3D molecular structure images\n");
+#endif
     printf("  split          Split dataset into train/test/validation sets\n");
     printf("  validate       Validate SMILES syntax\n");
     printf("  version        Print version information\n");
@@ -48,8 +50,10 @@ int main(int argc, char* argv[]) {
         return cmd_canonicalize(argc, argv);
     } else if (strcmp(command, "compute") == 0) {
         return cmd_compute(argc, argv);
+#ifdef HAVE_CAIRO
     } else if (strcmp(command, "depict") == 0) {
         return cmd_depict(argc, argv);
+#endif
     } else if (strcmp(command, "split") == 0) {
         return cmd_split(argc, argv);
     } else if (strcmp(command, "validate") == 0) {

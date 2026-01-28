@@ -22,7 +22,9 @@
 #include "cchem/utils/progress.h"
 #include "cchem/utils/threading.h"
 #include "cchem/utils/memory.h"
+#ifdef HAVE_CAIRO
 #include "cchem/depictor/depictor.h"
+#endif
 #include "cchem/splitter/splitter.h"
 
 #ifdef HAVE_PARQUET
@@ -59,6 +61,7 @@ int cmd_validate(int argc, char* argv[]);
  */
 int cmd_compute(int argc, char* argv[]);
 
+#ifdef HAVE_CAIRO
 /**
  * @brief Execute the depict command
  * @param argc Argument count
@@ -66,6 +69,7 @@ int cmd_compute(int argc, char* argv[]);
  * @return Exit code (0 on success)
  */
 int cmd_depict(int argc, char* argv[]);
+#endif
 
 /**
  * @brief Execute the split command
@@ -82,7 +86,9 @@ int cmd_split(int argc, char* argv[]);
 void print_canonicalize_usage(const char* prog_name);
 void print_validate_usage(const char* prog_name);
 void print_compute_usage(const char* prog_name);
+#ifdef HAVE_CAIRO
 void print_depict_usage(const char* prog_name);
+#endif
 void print_split_usage(const char* prog_name);
 
 /* ============================================================================
