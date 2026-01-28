@@ -28,14 +28,14 @@ jobs:
           python-version: '3.11'
 
       - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.16.5
+        run: python -m pip install cibuildwheel==2.21.3
 
       # No pre-build needed - C sources are compiled directly into the Python extension
 
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse pycchem
         env:
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-*"
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*-musllinux_* *-win32 *_i686"
           CIBW_ARCHS_MACOS: "x86_64 arm64"
           CIBW_ARCHS_LINUX: "x86_64"
@@ -93,7 +93,21 @@ jobs:
           name: sdist
           path: dist
 
+      - name: List and verify dist contents
+        run: |
+          echo "Contents of dist/:"
+          ls -la dist/
+          echo ""
+          echo "Verifying wheel files..."
+          python3 -m pip install --upgrade pip wheel
+          for whl in dist/*.whl; do
+            echo "Checking $whl..."
+            python3 -m wheel unpack --dest /tmp/wheel-check "$whl" && echo "  OK" || echo "  FAILED"
+            rm -rf /tmp/wheel-check/*
+          done
+
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          attestations: false
