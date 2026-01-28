@@ -717,10 +717,15 @@ cchem_status_t molecule_neutralize(molecule_t* mol, const sanitize_options_t* op
             if (atom->element == ELEM_O || atom->element == ELEM_S) {
                 while (atom->charge < 0) {
                     atom->charge++;
-                    /* For bracket atoms, use h_count; otherwise implicit */
-                    if (atom->h_count >= 0) {
+                    /*
+                     * For bracket atoms where H was explicitly specified (h_count > 0),
+                     * keep using h_count. For atoms like [O-] where h_count=0 (no H written),
+                     * convert to implicit H to avoid unnecessary brackets in output.
+                     */
+                    if (atom->h_count > 0) {
                         atom->h_count++;
                     } else {
+                        atom->h_count = -1;  /* Convert to implicit */
                         atom->implicit_h_count++;
                     }
                 }
@@ -729,9 +734,10 @@ cchem_status_t molecule_neutralize(molecule_t* mol, const sanitize_options_t* op
             else if (atom->element == ELEM_N) {
                 while (atom->charge < 0) {
                     atom->charge++;
-                    if (atom->h_count >= 0) {
+                    if (atom->h_count > 0) {
                         atom->h_count++;
                     } else {
+                        atom->h_count = -1;
                         atom->implicit_h_count++;
                     }
                 }

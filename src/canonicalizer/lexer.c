@@ -296,7 +296,9 @@ static cchem_status_t lexer_parse_bracket_atom(lexer_t* lexer, token_t* token) {
     }
 
     /* Parse hydrogen count (optional) */
+    bool has_explicit_h = false;
     if (lexer_current(lexer) == 'H') {
+        has_explicit_h = true;
         lexer_advance(lexer);
         if (isdigit(lexer_current(lexer))) {
             int h = 0;
@@ -330,6 +332,16 @@ static cchem_status_t lexer_parse_bracket_atom(lexer_t* lexer, token_t* token) {
             }
         }
         token->data.atom.charge = sign * charge;
+    }
+
+    /*
+     * For bracket atoms without explicit H, set h_count=0.
+     * In SMILES, [X] means element X with 0 hydrogens, regardless of charge.
+     * Examples: [N] = nitrogen radical, [C+] = carbocation, [O-] = oxide
+     * If H is wanted, it must be explicit: [NH], [CH+], [OH-]
+     */
+    if (!has_explicit_h) {
+        token->data.atom.h_count = 0;
     }
 
     /* Parse atom class (optional) :n */
