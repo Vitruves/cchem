@@ -14,6 +14,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+
+/* M_PI is not defined by default in MSVC */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #include "cchem/utils/descriptors.h"
 #include "cchem/canonicalizer/molecule.h"
 #include "cchem/canonicalizer/atom.h"
