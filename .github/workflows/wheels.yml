@@ -41,7 +41,7 @@ jobs:
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_BEFORE_BUILD: "pip install cffi"
-          CIBW_BUILD_VERBOSITY: "1"
+          CIBW_BUILD_VERBOSITY: "3"
           CIBW_TEST_REQUIRES: "pytest"
           CIBW_TEST_COMMAND: "python -c \"import pycchem; print(pycchem.version())\""
 

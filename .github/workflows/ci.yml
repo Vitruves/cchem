@@ -108,7 +108,7 @@ jobs:
           while (-not $success -and $retryCount -lt $maxRetries) {
             $retryCount++
             Write-Host "Attempt $retryCount of $maxRetries"
-            vcpkg install cairo libjpeg-turbo zstd zlib pthreads --triplet x64-windows
+            vcpkg install cairo libjpeg-turbo zstd zlib pthreads getopt --triplet x64-windows
             if ($LASTEXITCODE -eq 0) {
               $success = $true
             } else {

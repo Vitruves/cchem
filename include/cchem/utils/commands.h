@@ -15,9 +15,11 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <getopt.h>  /* from vcpkg */
+#include <windows.h>
 #define isatty _isatty
 #define fileno _fileno
-/* getopt provided by vcpkg or bundled */
+#define usleep(us) Sleep((us) / 1000)
 #else
 #include <getopt.h>
 #include <unistd.h>
