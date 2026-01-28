@@ -185,7 +185,7 @@ elif sys.platform == "darwin":
     _libraries.append("m")
 else:
     _libraries.append("m")
-    _libraries.append("pthread")
+    # Note: pthread not needed since threading files are excluded
 
 ffi.set_source(
     "pycchem._cchem_ffi",
