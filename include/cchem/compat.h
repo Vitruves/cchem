@@ -55,6 +55,11 @@ static inline int __builtin_popcountll(unsigned long long x) {
 #include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
 
+/* usleep emulation using Windows Sleep */
+#ifndef usleep
+#define usleep(us) Sleep((us) / 1000)
+#endif
+
 /* ============================================================================
  * C11 Atomics emulation for MSVC using Interlocked functions
  * ============================================================================ */

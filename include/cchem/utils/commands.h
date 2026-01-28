@@ -20,12 +20,12 @@
 #define isatty _isatty
 #define fileno _fileno
 #define usleep(us) Sleep((us) / 1000)
+#include <pthread.h>  /* from vcpkg pthreads */
 #else
 #include <getopt.h>
 #include <unistd.h>
-#endif
-
 #include <pthread.h>
+#endif
 
 #include "cchem/cchem.h"
 #include "cchem/utils/descriptors.h"
