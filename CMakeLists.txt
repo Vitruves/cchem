@@ -373,7 +373,8 @@ set(CCHEM_SOURCES
 
 # Create static library
 add_library(cchem_lib STATIC ${CCHEM_SOURCES})
-target_link_libraries(cchem_lib PRIVATE ${THREADS_LIBRARIES})
+# Use PUBLIC for THREADS_LIBRARIES so pthread include directories propagate to consumers
+target_link_libraries(cchem_lib PUBLIC ${THREADS_LIBRARIES})
 
 if(HAVE_JPEG)
     target_link_libraries(cchem_lib PRIVATE ${JPEG_LIBRARIES})
@@ -390,6 +391,13 @@ endif()
 if(HAVE_CARQUET)
     target_link_libraries(cchem_lib PRIVATE carquet)
     target_compile_definitions(cchem_lib PRIVATE HAVE_PARQUET=1)
+endif()
+
+# Helper variable for test libraries (m on Unix, nothing on Windows)
+if(WIN32)
+    set(MATH_LIBRARY "")
+else()
+    set(MATH_LIBRARY m)
 endif()
 
 # Main executable
@@ -425,48 +433,48 @@ endif()
 enable_testing()
 
 add_executable(test_lexer tests/test_lexer.c)
-target_link_libraries(test_lexer PRIVATE cchem_lib m)
+target_link_libraries(test_lexer PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_lexer COMMAND test_lexer)
 
 add_executable(test_parser tests/test_parser.c)
-target_link_libraries(test_parser PRIVATE cchem_lib m)
+target_link_libraries(test_parser PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_parser COMMAND test_parser)
 
 add_executable(test_molecule tests/test_molecule.c)
-target_link_libraries(test_molecule PRIVATE cchem_lib m)
+target_link_libraries(test_molecule PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_molecule COMMAND test_molecule)
 
 add_executable(test_canon tests/test_canon.c)
-target_link_libraries(test_canon PRIVATE cchem_lib m)
+target_link_libraries(test_canon PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_canon COMMAND test_canon)
 
 add_executable(test_integration tests/test_integration.c)
-target_link_libraries(test_integration PRIVATE cchem_lib m)
+target_link_libraries(test_integration PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_integration COMMAND test_integration)
 
 add_executable(test_stereo tests/test_stereo.c)
-target_link_libraries(test_stereo PRIVATE cchem_lib m)
+target_link_libraries(test_stereo PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_stereo COMMAND test_stereo)
 
 add_executable(test_debug tests/test_debug.c)
-target_link_libraries(test_debug PRIVATE cchem_lib m)
+target_link_libraries(test_debug PRIVATE cchem_lib ${MATH_LIBRARY})
 
 add_executable(test_descriptors tests/test_descriptors.c)
-target_link_libraries(test_descriptors PRIVATE cchem_lib m)
+target_link_libraries(test_descriptors PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_descriptors COMMAND test_descriptors)
 
 add_executable(test_descriptors_extended tests/test_descriptors_extended.c)
-target_link_libraries(test_descriptors_extended PRIVATE cchem_lib m)
+target_link_libraries(test_descriptors_extended PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_descriptors_extended COMMAND test_descriptors_extended)
 
 if(WITH_CAIRO)
     add_executable(test_mmff94 tests/test_mmff94.c)
-    target_link_libraries(test_mmff94 PRIVATE cchem_lib m)
+    target_link_libraries(test_mmff94 PRIVATE cchem_lib ${MATH_LIBRARY})
     add_test(NAME test_mmff94 COMMAND test_mmff94)
 endif()
 
 add_executable(test_sanitize tests/test_sanitize.c)
-target_link_libraries(test_sanitize PRIVATE cchem_lib m)
+target_link_libraries(test_sanitize PRIVATE cchem_lib ${MATH_LIBRARY})
 add_test(NAME test_sanitize COMMAND test_sanitize)
 
 # LogD 7.4 development test
