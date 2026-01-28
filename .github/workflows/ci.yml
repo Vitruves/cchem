@@ -85,12 +85,41 @@ jobs:
       matrix:
         build_type: [Release, Debug]
 
+    env:
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
     steps:
       - uses: actions/checkout@v4
 
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
       - name: Install dependencies
+        shell: pwsh
         run: |
-          vcpkg install cairo libjpeg-turbo zstd zlib --triplet x64-windows
+          # Retry logic for transient network failures
+          $maxRetries = 3
+          $retryCount = 0
+          $success = $false
+          while (-not $success -and $retryCount -lt $maxRetries) {
+            $retryCount++
+            Write-Host "Attempt $retryCount of $maxRetries"
+            vcpkg install cairo libjpeg-turbo zstd zlib --triplet x64-windows
+            if ($LASTEXITCODE -eq 0) {
+              $success = $true
+            } else {
+              Write-Host "vcpkg install failed, retrying in 30 seconds..."
+              Start-Sleep -Seconds 30
+            }
+          }
+          if (-not $success) {
+            Write-Host "vcpkg install failed after $maxRetries attempts"
+            exit 1
+          }
 
       - name: Configure CMake
         run: |
