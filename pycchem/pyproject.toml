@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pycchem"
-version = "1.0.1"
+version = "1.1.0"
 description = "High-performance cheminformatics library - Python bindings for cchem"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -52,6 +52,9 @@ Documentation = "https://github.com/Vitruves/cchem#readme"
 Repository = "https://github.com/Vitruves/cchem"
 Issues = "https://github.com/Vitruves/cchem/issues"
 
+[project.scripts]
+cchem = "pycchem.cli:main"
+
 [tool.setuptools]
 packages = ["pycchem"]
 package-dir = {"" = "src"}
@@ -64,23 +67,14 @@ build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
 skip = "*-musllinux_*"
 
 [tool.cibuildwheel.linux]
-before-all = [
-    "yum install -y cairo-devel libjpeg-turbo-devel zlib-devel libzstd-devel || apt-get update && apt-get install -y libcairo2-dev libjpeg-dev zlib1g-dev libzstd-dev",
-    "cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(nproc)",
-]
+before-all = "yum install -y cairo-devel libjpeg-turbo-devel zlib-devel libzstd-devel || (apt-get update && apt-get install -y libcairo2-dev libjpeg-dev zlib1g-dev libzstd-dev) && cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(nproc)"
 repair-wheel-command = "auditwheel repair -w {dest_dir} {wheel}"
 
 [tool.cibuildwheel.macos]
-before-all = [
-    "brew install cairo jpeg zstd pkg-config",
-    "cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(sysctl -n hw.ncpu)",
-]
+before-all = "brew install cairo jpeg zstd pkg-config || true && cd {project} && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF && make -j$(sysctl -n hw.ncpu)"
 
 [tool.cibuildwheel.windows]
-before-all = [
-    "vcpkg install cairo libjpeg-turbo zstd zlib --triplet x64-windows",
-    "cd {project} && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF -DCMAKE_TOOLCHAIN_FILE=%VCPKG_INSTALLATION_ROOT%/scripts/buildsystems/vcpkg.cmake && cmake --build . --config Release",
-]
+before-all = "vcpkg install cairo libjpeg-turbo zstd zlib pthreads --triplet x64-windows && cd {project} && mkdir build & cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_NATIVE_ARCH=OFF -DCMAKE_TOOLCHAIN_FILE=%VCPKG_INSTALLATION_ROOT%/scripts/buildsystems/vcpkg.cmake && cmake --build . --config Release"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

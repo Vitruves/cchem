@@ -739,8 +739,10 @@ csv_mmap_reader_t* csv_mmap_reader_create(const char* filename) {
             return NULL;
         }
 
-        /* Advise kernel we'll read sequentially */
+        /* Advise kernel we'll read sequentially (Unix only) */
+#ifndef _WIN32
         madvise(reader->data, reader->size, MADV_SEQUENTIAL);
+#endif
     }
 
     reader->pos = 0;

@@ -3,6 +3,7 @@
  * @brief Canonicalize command implementation
  */
 
+#include "cchem/compat.h"
 #include "cchem/utils/commands.h"
 
 /* ============================================================================

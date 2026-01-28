@@ -85,6 +85,51 @@ smiles_list = ["CCO", "c1ccccc1", "CC(=O)O"]
 results = pycchem.canonicalize_batch(smiles_list)
 ```
 
+## Command-Line Interface
+
+After installation, the `cchem` command is available:
+
+```bash
+# Canonicalize SMILES
+cchem canonicalize -S "C(C)O"
+# Output: CCO
+
+# Validate SMILES
+cchem validate -S "CCO"
+# Output: CCO: valid
+
+# Compute descriptors
+cchem compute -S "CCO" -d MolecularWeight
+# Output: MolecularWeight: 46.069000
+
+# Compute all descriptors
+cchem compute -S "CCO" --all -o descriptors.csv
+
+# List available descriptors
+cchem compute --list
+
+# Sanitize SMILES
+cchem sanitize -S "[Na+].CC(=O)[O-]"
+# Output: CC(=O)O
+
+# Compare two SMILES
+cchem compare "CCO" "OCC"
+# Output: equivalent
+
+# Show version
+cchem --version
+```
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `canonicalize` | Canonicalize SMILES strings |
+| `validate` | Validate SMILES syntax |
+| `compute` | Compute molecular descriptors |
+| `sanitize` | Sanitize SMILES (remove salts, neutralize, etc.) |
+| `compare` | Check if two SMILES are equivalent |
+
 ## API Reference
 
 ### Functions

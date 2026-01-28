@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies (Windows)
         if: runner.os == 'Windows'
         run: |
-          vcpkg install cairo libjpeg-turbo zstd zlib --triplet x64-windows
+          vcpkg install cairo libjpeg-turbo zstd zlib pthreads --triplet x64-windows
 
       - name: Build cchem library (Unix)
         if: runner.os != 'Windows'

@@ -9,11 +9,9 @@
 #include <time.h>
 
 #ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>  /* Must come before windows.h, defines timeval */
 #include <windows.h>
-struct timeval {
-    long tv_sec;
-    long tv_usec;
-};
 static int gettimeofday(struct timeval* tv, void* tz) {
     (void)tz;
     FILETIME ft;

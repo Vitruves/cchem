@@ -3,6 +3,7 @@
  * @brief Threading utilities implementation
  */
 
+#include "cchem/compat.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>

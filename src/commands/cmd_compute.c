@@ -3,6 +3,7 @@
  * @brief Compute command implementation with pipeline streaming
  */
 
+#include "cchem/compat.h"
 #include "cchem/utils/commands.h"
 
 void print_compute_usage(const char* prog_name) {

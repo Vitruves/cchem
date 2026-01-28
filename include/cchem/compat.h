@@ -11,6 +11,8 @@
  * MSVC Compatibility
  * ============================================================================ */
 
+#include <windows.h>
+
 /* Thread-local storage */
 #define __thread __declspec(thread)
 #define _Thread_local __declspec(thread)
@@ -53,7 +55,22 @@ static inline int __builtin_popcountll(unsigned long long x) {
 #include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
 
-/* Disable specific warnings */
+/* ============================================================================
+ * C11 Atomics emulation for MSVC using Interlocked functions
+ * ============================================================================ */
+
+typedef volatile long atomic_size_t;
+typedef volatile long atomic_int;
+
+#define atomic_init(ptr, val) (*(ptr) = (long)(val))
+#define atomic_store(ptr, val) InterlockedExchange((ptr), (long)(val))
+#define atomic_load(ptr) InterlockedCompareExchange((ptr), 0, 0)
+#define atomic_fetch_add(ptr, val) InterlockedExchangeAdd((ptr), (long)(val))
+#define atomic_fetch_sub(ptr, val) InterlockedExchangeAdd((ptr), -(long)(val))
+
+/* ============================================================================
+ * Disable specific warnings
+ * ============================================================================ */
 #pragma warning(disable: 4100)  /* unreferenced formal parameter */
 #pragma warning(disable: 4244)  /* conversion, possible loss of data */
 #pragma warning(disable: 4267)  /* size_t to int conversion */
@@ -66,6 +83,7 @@ typedef SSIZE_T ssize_t;
 
 #include <strings.h>
 #include <alloca.h>
+#include <stdatomic.h>
 
 #endif /* _MSC_VER */
 

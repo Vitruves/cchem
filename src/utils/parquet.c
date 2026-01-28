@@ -3,6 +3,7 @@
  * @brief Parquet file reading and writing implementation
  */
 
+#include "cchem/compat.h"
 #include "cchem/utils/parquet.h"
 #include <carquet/carquet.h>
 #include <stdlib.h>
