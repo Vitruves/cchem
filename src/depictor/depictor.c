@@ -480,10 +480,12 @@ cchem_status_t depict_molecule(const molecule_t* mol, const char* filename,
     render_context_t* ctx = NULL;
     if (opts.format == IMG_FORMAT_SVG) {
         ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
-                                        IMG_FORMAT_SVG, filename);
+                                        IMG_FORMAT_SVG, filename,
+                                        opts.transparent_background);
     } else {
         ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
-                                        IMG_FORMAT_PNG, NULL);
+                                        IMG_FORMAT_PNG, NULL,
+                                        opts.transparent_background);
     }
 
     if (!ctx) {
@@ -646,10 +648,12 @@ cchem_status_t depict_smiles_verbose(const char* smiles, const char* filename,
     render_context_t* ctx = NULL;
     if (opts.format == IMG_FORMAT_SVG) {
         ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
-                                        IMG_FORMAT_SVG, filename);
+                                        IMG_FORMAT_SVG, filename,
+                                        opts.transparent_background);
     } else {
         ctx = render_context_create_ex(scaled_width, scaled_height, opts.background,
-                                        IMG_FORMAT_PNG, NULL);
+                                        IMG_FORMAT_PNG, NULL,
+                                        opts.transparent_background);
     }
 
     if (!ctx) {

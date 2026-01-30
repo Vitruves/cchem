@@ -14,7 +14,8 @@ typedef struct render_context render_context_t;
 /* Create render context - for SVG output, pass IMG_FORMAT_SVG to render_context_create_ex */
 render_context_t* render_context_create(int width, int height, rgb_color_t background);
 render_context_t* render_context_create_ex(int width, int height, rgb_color_t background,
-                                            image_format_t format, const char* svg_filename);
+                                            image_format_t format, const char* svg_filename,
+                                            bool transparent_background);
 void render_context_free(render_context_t* ctx);
 
 /* Render molecule to context */

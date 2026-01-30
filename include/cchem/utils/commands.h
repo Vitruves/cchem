@@ -42,7 +42,7 @@
 #include "cchem/utils/parquet.h"
 #endif
 
-#define VERSION "1.1.2"
+#define VERSION "1.1.3"
 
 /* ============================================================================
  * Command Entry Points

@@ -1,6 +1,8 @@
 # cchem
 
-<img width="197" height="168" alt="cchem_logo" src="https://github.com/user-attachments/assets/461c8341-390e-4568-a803-a4137342f2b8" />
+<p align="center">
+  <img src="res/img/cchem.png" alt="cchem logo" width="400" />
+</p>
 
 High-performance cheminformatics library written in pure C.
 
@@ -64,6 +66,13 @@ High-performance cheminformatics library written in pure C.
 | Pharmacophore | 30+ | Pharmacophore points, density, drug-likeness metrics |
 
 ### 2D/3D Visualization
+
+<img src="res/img/olanzapine.png" alt="Olanzapine 2D depiction" width="300" />
+
+```bash
+./cchem depict -S "CN1CCN(CC1)C/2=N/c4ccccc4Nc3sc(C)cc\23" -o olanzapine.png --colored-atoms --quality 100
+```
+
 - 2D coordinate generation with automatic layout
 - 3D coordinate generation with MMFF94 force field optimization
 - Render styles: wireframe, sticks, ball-and-stick, spacefill, surface
@@ -83,7 +92,46 @@ High-performance cheminformatics library written in pure C.
 - Batch compute functions per descriptor category
 - Pipeline streaming for constant memory on large datasets
 
-## Installation
+## Python Bindings
+
+cchem is available as a Python package via pip:
+
+```bash
+pip install pycchem
+```
+
+```python
+import pycchem
+
+# Canonicalize SMILES
+pycchem.canonicalize("c1ccccc1")  # => 'c1ccccc1'
+
+# Parse molecule and compute descriptors
+mol = pycchem.Molecule("CCO")
+mol.descriptor("MolecularWeight")  # => 46.069
+descriptors = mol.descriptors()     # => dict of all 1600+ descriptors
+
+# Batch canonicalization
+results = pycchem.canonicalize_batch(["CCO", "c1ccccc1", "CC(=O)O"])
+
+# Sanitize molecules
+pycchem.sanitize("[Na+].CC(=O)[O-]", flags="complete")  # => 'C(=O)(O)C'
+
+# Validate SMILES
+pycchem.validate("CCO")      # => True
+pycchem.validate("invalid")  # => False
+```
+
+The package also installs a `cchem` CLI command:
+
+```bash
+cchem canonicalize -S "c1ccccc1"
+cchem compute -S "CCO" -d MolecularWeight
+```
+
+Supports Python 3.9+ on Linux, macOS, and Windows.
+
+## C Library Installation
 
 ### Dependencies
 
@@ -132,7 +180,7 @@ vcpkg install zstd zlib --triplet x64-windows
 ### Build
 
 ```bash
-git clone https://github.com/your-repo/cchem.git
+git clone https://github.com/Vitruves/cchem.git
 cd cchem
 mkdir build && cd build
 cmake ..
@@ -298,6 +346,7 @@ Options:
   --font-scale <float>      Font scale factor
   --heteroatom-gap <float>  Gap around heteroatom labels
   --line-cap <style>        Line cap style (butt, round, square)
+  --transparent-background  Transparent background (PNG/SVG only)
   --debug                   Enable debug output
 ```
 
@@ -439,7 +488,7 @@ cchem/
 Licensed under the Apache License, Version 2.0.
 
 ```
-Copyright 2024
+Copyright 2025
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

@@ -44,6 +44,7 @@ void print_depict_usage(const char* prog_name) {
     printf("\n");
     printf("Other:\n");
     printf("  --toggle-aromaticity    Draw aromatic circles\n");
+    printf("  --transparent-background  Transparent background (PNG/SVG only)\n");
     printf("  --quality <1-100>       JPEG quality (default: 95)\n");
     printf("  -v, --verbose           Verbose output\n");
     printf("  --debug                 Print debug information\n");
@@ -85,6 +86,7 @@ int cmd_depict(int argc, char* argv[]) {
         {"verbose",        no_argument,       0, 'v'},
         {"debug",          no_argument,       0, 1018},
         {"font-scale",     required_argument, 0, 1019},
+        {"transparent-background", no_argument, 0, 1020},
         {"help",           no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
@@ -227,6 +229,9 @@ int cmd_depict(int argc, char* argv[]) {
             case 1018:  /* --debug */
                 options.debug = true;
                 break;
+            case 1020:  /* --transparent-background */
+                options.transparent_background = true;
+                break;
             case 1019:  /* --font-scale */
                 options.font_scale = atof(optarg);
                 if (options.font_scale < 0.1) options.font_scale = 0.1;
@@ -266,6 +271,12 @@ int cmd_depict(int argc, char* argv[]) {
         } else if (strcasecmp(ext, ".jpg") == 0 || strcasecmp(ext, ".jpeg") == 0) {
             options.format = IMG_FORMAT_JPEG;
         }
+    }
+
+    /* Validate transparent background + JPEG combination */
+    if (options.transparent_background && options.format == IMG_FORMAT_JPEG) {
+        fprintf(stderr, "Error: --transparent-background is not supported with JPEG output. Use PNG or SVG.\n");
+        return 1;
     }
 
     /* Get render style name */

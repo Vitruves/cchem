@@ -108,6 +108,7 @@ typedef struct {
     bool colored_atoms;         /* Use element colors for atom labels (false = black) */
     bool terminal_carbon_labels; /* Show labels on terminal carbons (CH3) */
     bool debug;                  /* Print debug information */
+    bool transparent_background; /* Use transparent background (PNG/SVG only) */
 } depictor_options_t;
 
 /* Default: Publication-quality rendering */
@@ -139,7 +140,8 @@ typedef struct {
     .font_scale = 1.0, \
     .colored_atoms = false, \
     .terminal_carbon_labels = false, \
-    .debug = false \
+    .debug = false, \
+    .transparent_background = false \
 }
 
 /* ============== Coordinate Management ============== */

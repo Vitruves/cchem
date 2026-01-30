@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, macos-14, windows-latest]
+        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
 
     steps:
       - uses: actions/checkout@v4
@@ -30,8 +30,6 @@ jobs:
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel==2.21.3
 
-      # No pre-build needed - C sources are compiled directly into the Python extension
-
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse pycchem
         env:
@@ -41,14 +39,25 @@ jobs:
           CIBW_ARCHS_LINUX: "x86_64"
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_BEFORE_BUILD: "pip install cffi"
-          CIBW_BUILD_VERBOSITY: "3"
-          CIBW_TEST_REQUIRES: "pytest"
+          CIBW_BUILD_VERBOSITY: "1"
           CIBW_TEST_COMMAND: "python -c \"import pycchem; print(pycchem.version())\""
 
-      - uses: actions/upload-artifact@v4
+      - name: Verify wheels before upload
+        run: |
+          python -m pip install wheel
+          for whl in wheelhouse/*.whl; do
+            echo "Verifying $whl..."
+            python -m wheel unpack --dest /tmp/wheel-verify "$whl"
+            rm -rf /tmp/wheel-verify/*
+          done
+        shell: bash
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
+          compression-level: 0
 
   build_sdist:
     name: Build source distribution
@@ -67,10 +76,12 @@ jobs:
           pip install build
           python -m build --sdist
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
         with:
           name: sdist
           path: pycchem/dist/*.tar.gz
+          compression-level: 0
 
   publish:
     name: Publish to PyPI
@@ -82,32 +93,34 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
         with:
-          pattern: wheels-*
-          path: dist
-          merge-multiple: true
+          path: artifacts
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: sdist
-          path: dist
-
-      - name: List and verify dist contents
+      - name: Collect dist files
         run: |
-          echo "Contents of dist/:"
+          mkdir -p dist
+          find artifacts -name "*.whl" -exec cp {} dist/ \;
+          find artifacts -name "*.tar.gz" -exec cp {} dist/ \;
+          echo "=== Contents of dist/ ==="
           ls -la dist/
-          echo ""
-          echo "Verifying wheel files..."
-          python3 -m pip install --upgrade pip wheel
+
+      - name: Verify all packages
+        run: |
+          python3 -m pip install --upgrade pip wheel twine
+          echo "=== Verifying wheels ==="
           for whl in dist/*.whl; do
             echo "Checking $whl..."
-            python3 -m wheel unpack --dest /tmp/wheel-check "$whl" && echo "  OK" || echo "  FAILED"
-            rm -rf /tmp/wheel-check/*
+            python3 -m wheel unpack --dest /tmp/whl-check "$whl" || exit 1
+            rm -rf /tmp/whl-check/*
           done
+          echo "=== Running twine check ==="
+          python3 -m twine check dist/*
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
           attestations: false
+          skip-existing: true

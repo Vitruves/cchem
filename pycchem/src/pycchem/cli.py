@@ -91,6 +91,14 @@ def cmd_compute(args: argparse.Namespace) -> int:
     """Compute molecular descriptors."""
     import pycchem
 
+    if args.list:
+        # List available descriptors (no SMILES needed)
+        descriptors = pycchem.list_descriptors()
+        for name in descriptors:
+            print(name)
+        print(f"\nTotal: {len(descriptors)} descriptors", file=sys.stderr)
+        return 0
+
     if not args.smiles:
         print("Error: SMILES required. Use -S option.", file=sys.stderr)
         return 1
@@ -141,12 +149,6 @@ def cmd_compute(args: argparse.Namespace) -> int:
         except pycchem.CChemError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
-    elif args.list:
-        # List available descriptors
-        descriptors = pycchem.list_descriptors()
-        for name in descriptors:
-            print(name)
-        print(f"\nTotal: {len(descriptors)} descriptors", file=sys.stderr)
     else:
         print("Error: Specify -d DESCRIPTOR, --all, or --list", file=sys.stderr)
         return 1

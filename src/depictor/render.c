@@ -35,11 +35,12 @@ struct render_context {
 /* ============== Context Management ============== */
 
 render_context_t* render_context_create(int width, int height, rgb_color_t background) {
-    return render_context_create_ex(width, height, background, IMG_FORMAT_PNG, NULL);
+    return render_context_create_ex(width, height, background, IMG_FORMAT_PNG, NULL, false);
 }
 
 render_context_t* render_context_create_ex(int width, int height, rgb_color_t background,
-                                            image_format_t format, const char* svg_filename) {
+                                            image_format_t format, const char* svg_filename,
+                                            bool transparent_background) {
     render_context_t* ctx = calloc(1, sizeof(render_context_t));
     if (!ctx) return NULL;
 
@@ -73,10 +74,14 @@ render_context_t* render_context_create_ex(int width, int height, rgb_color_t ba
     cairo_set_antialias(ctx->cr, CAIRO_ANTIALIAS_BEST);
 
     /* Fill background */
-    cairo_set_source_rgb(ctx->cr,
-                        background.r / 255.0,
-                        background.g / 255.0,
-                        background.b / 255.0);
+    if (transparent_background) {
+        cairo_set_source_rgba(ctx->cr, 0, 0, 0, 0);
+    } else {
+        cairo_set_source_rgb(ctx->cr,
+                            background.r / 255.0,
+                            background.g / 255.0,
+                            background.b / 255.0);
+    }
     cairo_paint(ctx->cr);
 
     return ctx;
